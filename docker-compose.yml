@@ -64,6 +64,11 @@ services:
     networks:
       sqlnet:
         ipv4_address: 172.69.128.2
+    healthcheck:
+      test: ["CMD", "python", "/app/mysql_healthcheck.py"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
 
 networks:
   sqlnet:
