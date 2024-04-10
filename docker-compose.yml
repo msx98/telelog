@@ -10,10 +10,10 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    #ports:
+    ports:
       # <Port exposed> : <MySQL Port running inside container>
       #- "127.0.0.1:3306:3306"
-      #- "3308:3306"
+      - "3308:3306"
       #- "172.69.128.2:3307:3306"
     volumes:
       - ./MessageStore/db:/var/lib/mysql
@@ -49,11 +49,16 @@ services:
       TELEGRAM_API_ID: ${TELEGRAM_API_ID}
       TELEGRAM_API_HASH: ${TELEGRAM_API_HASH}
       TELEGRAM_PHONE: ${TELEGRAM_PHONE}
+      TELEGRAM_PASS: ${TELEGRAM_PASS}
       MYSQL_HOST: ${MYSQL_HOST}
       MYSQL_PORT: ${MYSQL_PORT}
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MONGO_HOST: ${MONGO_HOST}
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_DATABASE: ${MONGO_DATABASE}
     volumes:
       - ./MessageFetch/session:/app/session
     networks:

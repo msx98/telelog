@@ -1,9 +1,13 @@
 FROM python:3.11-slim
 
-RUN pip3 install pyrogram tgcrypto pymongo deep-translator mysql-connector-python
+RUN pip3 install pyrogram tgcrypto pymongo deep-translator mysql-connector-python python-dotenv
 
-ADD src/main.py /app/main.py
+ADD ./src/*.py /app/
 
-ADD src/session/listener.session* /app/
+ADD ./src/listener.session /app/
 
-ENTRYPOINT ["python", "/app/main.py"]
+ADD ./src/listener.session-journal /app/
+
+WORKDIR /app
+
+ENTRYPOINT ["python", "./main.py"]

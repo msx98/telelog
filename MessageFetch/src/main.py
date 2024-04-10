@@ -30,18 +30,18 @@ def collect_list(
 	return l
 
 
+load_dotenv()
 db = MySQLBackend()#MYSQL_HOST="127.0.0.1", MYSQL_PORT="3308")
 #db = MongoBackend()#HOST="mongodb://localhost:27017/")
 
 
-load_dotenv()
 TELEGRAM_API_ID = os.environ["TELEGRAM_API_ID"]
 TELEGRAM_API_HASH = os.environ["TELEGRAM_API_HASH"]
 TELEGRAM_PHONE = os.environ["TELEGRAM_PHONE"]
 TELEGRAM_PASS = os.environ["TELEGRAM_PASS"]
 
 
-app = Client("simcha", api_id=TELEGRAM_API_ID, api_hash=TELEGRAM_API_HASH, phone_number=TELEGRAM_PHONE, password=TELEGRAM_PASS)
+app = Client("listener", api_id=TELEGRAM_API_ID, api_hash=TELEGRAM_API_HASH, phone_number=TELEGRAM_PHONE, password=TELEGRAM_PASS)
 
 
 @app.on_message(filters.text & filters.channel)
