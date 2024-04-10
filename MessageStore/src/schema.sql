@@ -1,0 +1,43 @@
+CREATE TABLE IF NOT EXISTS messages (
+    chat_id BIGINT NOT NULL,
+    message_id BIGINT NOT NULL,
+    chat_name TEXT CHARACTER SET utf8mb4,
+    date TIMESTAMP,
+    text VARCHAR(4097) CHARACTER SET utf8mb4,
+    sender_id BIGINT,
+    sender_type TINYINT,
+    sender_first_name TEXT,
+    sender_last_name TEXT,
+    sender_username TEXT,
+    sender_is_verified BOOLEAN,
+    sender_is_scam BOOLEAN,
+    sender_is_restricted BOOLEAN,
+    sender_is_bot BOOLEAN,
+    sender_is_support BOOLEAN,
+    reply_to_chat_id BIGINT,
+    reply_to_message_id BIGINT,
+    reply_to_top_message_id BIGINT,
+    forward_chat_id BIGINT,
+    forward_message_id BIGINT,
+    forward_sender_id BIGINT,
+    forward_date TIMESTAMP,
+    reactions TEXT CHARACTER SET utf8mb4,
+    views INTEGER,
+    forwards INTEGER,
+    PRIMARY KEY (chat_id, message_id)
+);
+
+CREATE TABLE IF NOT EXISTS chats (
+    id BIGINT NOT NULL,
+    type TINYINT NOT NULL,
+    first_name TEXT CHARACTER SET utf8mb4,
+    last_name TEXT CHARACTER SET utf8mb4,
+    username TEXT,
+    is_verified BOOLEAN,
+    is_scam BOOLEAN,
+    is_restricted BOOLEAN,
+    is_bot BOOLEAN,
+    is_support BOOLEAN,
+    members_count INTEGER,
+    PRIMARY KEY (id)
+);
