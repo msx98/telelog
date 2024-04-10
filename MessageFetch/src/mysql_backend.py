@@ -84,7 +84,7 @@ class MessageQueue:
     def __init__(self, db):
         self.db = db
         self.queue = queue.Queue()
-        self.lock = threading.Lock()
+        self.lock = db.lock
         self.last_push = time.time()
         self.thread = threading.Thread(target=self.run)
         self.thread.start()
@@ -124,6 +124,7 @@ class MySQLBackend:
                                             user=MYSQL_USER,
                                             password=MYSQL_PASSWORD,
                                             port=MYSQL_PORT,)
+        self.lock = threading.Lock()
         if not self.conn.is_connected():
             raise Exception("Could not connect")
         self.message_queue = MessageQueue(self)
@@ -173,3 +174,11 @@ class MySQLBackend:
                         ON DUPLICATE KEY UPDATE chat_name=%s, chat_type=%s""", (chat_id, chat.title, chat_type, chat.title, chat_type))
         self.conn.commit()
         cur.close()
+    
+    def count_messages(self) -> int:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM messages")
+            n = cur.fetchone()[0]
+            cur.close()
+            return n
