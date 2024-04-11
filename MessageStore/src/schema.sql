@@ -39,5 +39,8 @@ CREATE TABLE IF NOT EXISTS chats (
     is_bot BOOLEAN,
     is_support BOOLEAN,
     members_count INTEGER,
+    group_id BIGINT,
+    channel_id BIGINT,
+    title TEXT CHARACTER SET utf8mb4,
     PRIMARY KEY (id)
 );
