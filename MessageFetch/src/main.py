@@ -56,12 +56,13 @@ def handle_message_from_group(bot, message):
 #from pyrogram.types import Message, User, Chat
 @app.on_message(filters.text & filters.private)
 def handle_message_from_private(bot, message):
-	n = db.count_messages()
-	bot.send_message(
-		chat_id=message.chat.id,
-		text=f"Total messages: {n}",
-		reply_to_message_id=message.id
-	)
+	if message.text == "/count":
+		n = db.count_messages()
+		bot.send_message(
+			chat_id=message.chat.id,
+			text=f"Total messages: {n}",
+			reply_to_message_id=message.id
+		)
 
 
 app.run()
