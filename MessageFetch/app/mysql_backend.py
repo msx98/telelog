@@ -10,6 +10,7 @@ from mysql.connector import connection as MySQLConnection
 import threading
 import queue
 import time
+import datetime
 
 
 chat_type_dict = {
@@ -49,7 +50,8 @@ def normalize_message(message: Message) -> Optional[Dict[str, Optional[str|int]]
         message_dict["sender_is_scam"] = message.sender_chat.is_scam or message.sender_chat.is_fake
         message_dict["sender_is_restricted"] = message.sender_chat.is_restricted
     if message.reply_to_message:
-        message_dict["reply_to_chat_id"] = message.reply_to_message.chat.id
+        if message.reply_to_message.chat:
+            message_dict["reply_to_chat_id"] = message.reply_to_message.chat.id
         message_dict["reply_to_message_id"] = message.reply_to_message_id
         message_dict["reply_to_top_message_id"] = message.reply_to_top_message_id
     if message.forward_from_chat:
@@ -81,8 +83,9 @@ def normalize_chat(chat: Chat) -> Dict[str, Optional[str|int]]:
 
 
 class MessageQueue:
-    def __init__(self, db):
+    def __init__(self, db, max_queue_size):
         self.db = db
+        self.max_queue_size = max_queue_size
         self.queue = queue.Queue()
         self.lock = db.lock
         self.last_push = time.time()
@@ -97,7 +100,7 @@ class MessageQueue:
 
     def run(self):
         while True:
-            if self.queue.qsize() >= 10:
+            if self.queue.qsize() >= self.max_queue_size or time.time() - self.last_push > 5:
                 #print(f"Reached condition - gonna wait for lock")
                 with self.lock:
                     messages = [self.queue.get() for _ in range(self.queue.qsize())]
@@ -118,6 +121,7 @@ class MySQLBackend:
         MYSQL_USER = os.environ["MYSQL_USER"],
         MYSQL_PASSWORD = os.environ["MYSQL_PASSWORD"],
         MYSQL_DATABASE = os.environ["MYSQL_DATABASE"],
+        MAX_QUEUE_SIZE = 10,
     ):
         self.conn = mysql.connector.connect(host=MYSQL_HOST,
                                             database=MYSQL_DATABASE,
@@ -127,7 +131,7 @@ class MySQLBackend:
         self.lock = threading.Lock()
         if not self.conn.is_connected():
             raise Exception("Could not connect")
-        self.message_queue = MessageQueue(self)
+        self.message_queue = MessageQueue(self, MAX_QUEUE_SIZE)
         print(f"Connected to MySQL at {MYSQL_HOST}:{MYSQL_PORT}")
 
     def add_message(self, message: Message):
@@ -143,7 +147,8 @@ class MySQLBackend:
             message_norm_keys, message_norm_vals = list(zip(*message_norm.items()))
             message_norm_keys = ",".join(message_norm_keys)
             message_norm_vals_almost = ",".join("%s" for _ in message_norm_vals)
-            cur.execute(f"INSERT INTO messages ({message_norm_keys}) VALUES ({message_norm_vals_almost})", message_norm_vals)
+            update_str = ", ".join([f"{k}=VALUES({k})" for k in message_norm.keys()])
+            cur.execute(f"INSERT INTO messages ({message_norm_keys}) VALUES ({message_norm_vals_almost}) ON DUPLICATE KEY UPDATE {update_str}", message_norm_vals)
         self.conn.commit()
         cur.close()
         print(f"Inserted {len(messages)} messages")
@@ -175,10 +180,10 @@ class MySQLBackend:
         self.conn.commit()
         cur.close()
     
-    def count_messages(self) -> int:
+    def count_messages(self) -> Tuple[int, datetime.datetime]:
         with self.lock:
             cur = self.conn.cursor()
-            cur.execute("SELECT COUNT(*) FROM messages")
-            n = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*), MAX(date) FROM messages")
+            n, date = cur.fetchone()
             cur.close()
-            return n
+            return n, date

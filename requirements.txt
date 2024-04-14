@@ -1,0 +1,6 @@
+pyrogram
+tgcrypto
+mysql-connector-python
+python-dotenv
+pymongo
+deep-translator

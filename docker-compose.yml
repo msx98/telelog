@@ -10,10 +10,10 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    ports:
+        #ports:
       # <Port exposed> : <MySQL Port running inside container>
       #- "127.0.0.1:3306:3306"
-      - "3308:3306"
+      #- "3308:3306"
       #- "172.69.128.2:3307:3306"
     volumes:
       - ./MessageStore/db:/var/lib/mysql
@@ -60,7 +60,7 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
       MONGO_DATABASE: ${MONGO_DATABASE}
     volumes:
-      - ./MessageFetch/session:/app/session
+      - ./MessageFetch/app:/app
     networks:
       sqlnet:
         ipv4_address: 172.69.128.2
