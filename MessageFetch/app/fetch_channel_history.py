@@ -111,6 +111,7 @@ channel_counts = [0 for i in range(len(channels))]
 current_channel = None
 
 def get_channel_counts() -> str:
+    global current_channel
     s = f"""Currently working on "{current_channel}"\n"""
     for channel_num, channel in enumerate(channels):
         channel_id, channel_title, channel_members = channel
@@ -118,12 +119,18 @@ def get_channel_counts() -> str:
     return s
 
 
+#it = client.get_chat_history(channels[0][0])
+#row = next(it)
+#from enum import Enum
+#primitive_types = (bool, int, str, float, datetime.datetime, type(None))
+
 async def main():
     global current_channel
     global channel_counts
     for channel_num, channel in enumerate(channels):
         channel_id, channel_title, channel_members = channel
         print(f"Working on channel {channel_title}")
+        current_channel = channel_title
         last_announced = time.time()
         async for row in client.get_chat_history(channel_id):
             db.add_message(row)

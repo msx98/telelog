@@ -1,10 +1,13 @@
 from typing import Tuple, Dict, Any, Optional, List
 from collections import OrderedDict
 import pyrogram.types
-from pyrogram.types import Message, User, Chat
-from pyrogram.enums import ChatType
+from pyrogram.types import Message, User, Chat, MessageReactions, Reaction
+from pyrogram.enums import ChatType, MessageMediaType
 import os
+import pyrogram
 from pymongo import MongoClient
+from enum import Enum
+import datetime
 
 
 chat_type_dict = {
@@ -16,70 +19,81 @@ chat_type_dict = {
 }
 
 
-def normalize_message(message: Message) -> Optional[Dict[str, Optional[str|int]]]:
-    if message.text is None or message.outgoing:
+media_type_dict = {
+    MessageMediaType.AUDIO: 1,
+    MessageMediaType.DOCUMENT: 2,
+    MessageMediaType.PHOTO: 3,
+    MessageMediaType.STICKER: 4,
+    MessageMediaType.VIDEO: 5,
+    MessageMediaType.ANIMATION: 6,
+    MessageMediaType.VOICE: 7,
+    MessageMediaType.VIDEO_NOTE: 8,
+    MessageMediaType.CONTACT: 9,
+    MessageMediaType.LOCATION: 10,
+    MessageMediaType.VENUE: 11,
+    MessageMediaType.POLL: 12,
+    MessageMediaType.WEB_PAGE: 13,
+    MessageMediaType.DICE: 14,
+    MessageMediaType.GAME: 15,
+}
+
+
+primitive_types = (bool, int, str, float, datetime.datetime, type(None))
+unparseable_types = (pyrogram.client.Client,)
+def clean_dict(d_old, rec_level=1, max_rec=10) -> Dict:
+    if isinstance(d_old, unparseable_types):
         return None
-    message_dict = dict()
-    message_dict["text"] = message.text
-    message_dict["date"] = message.date
-    if message.chat:
-        message_dict["chat_id"] = message.chat.id
-        message_dict["chat_name"] = message.chat.title
-    message_dict["message_id"] = message.id
-    if message.from_user:
-        message_dict["sender_type"] = 0
-        message_dict["sender_id"] = message.from_user.id
-        message_dict["sender_first_name"] = message.from_user.first_name
-        message_dict["sender_last_name"] = message.from_user.last_name
-        message_dict["sender_username"] = message.from_user.username
-        message_dict["sender_is_verified"] = message.from_user.is_premium
-        message_dict["sender_is_scam"] = message.from_user.is_scam or message.from_user.is_fake or message.from_user.is_deleted
-        message_dict["sender_is_restricted"] = message.from_user.is_restricted
-    elif message.sender_chat:
-        message_dict["sender_type"] = chat_type_dict[message.sender_chat.type]
-        message_dict["sender_id"] = message.sender_chat.id
-        message_dict["sender_first_name"] = message.sender_chat.title
-        message_dict["sender_username"] = message.sender_chat.username
-        message_dict["sender_is_verified"] = message.sender_chat.is_verified
-        message_dict["sender_is_scam"] = message.sender_chat.is_scam or message.sender_chat.is_fake
-        message_dict["sender_is_restricted"] = message.sender_chat.is_restricted
-    if message.reply_to_message:
-        message_dict["reply_to_chat_id"] = message.reply_to_message.chat.id
-        message_dict["reply_to_message_id"] = message.reply_to_message_id
-        message_dict["reply_to_top_message_id"] = message.reply_to_top_message_id
-    if message.forward_from_chat:
-        message_dict["forward_chat_id"] = message.forward_from_chat.id
-        message_dict["forward_message_id"] = message.forward_from_message_id
-        message_dict["forward_date"] = message.forward_date
-    # FIXME - do we also need to check for forward_from_user or something?
-    if message.reactions and message.reactions.reactions:
-        message_dict["reactions"] = message.reactions.reactions
-    message_dict["views"] = message.views
-    message_dict["forwards"] = message.forwards
-    # text, date, chat_id, chat_name, message_id, sender_id, sender_first_name, sender_last_name, sender_username, reply_to_chat_id, reply_to_message_id, reply_to_top_message_id, forward_chat_id, forward_message_id, forward_date, reactions, views, forwards
-    return message_dict
+    if rec_level > max_rec:
+        raise Exception()
+    #print(f"Working on {type(d_old)}, {d_old}")
+    if isinstance(d_old, primitive_types):
+        return d_old
+    elif isinstance(d_old, Enum):
+        return d_old.name
+    elif isinstance(d_old, list):
+        return [clean_dict(x,rec_level+1,max_rec) for x in d_old]
+    elif isinstance(d_old, dict):
+        d = dict()
+        for k, v in d_old.items():
+            v_new = clean_dict(v,rec_level+1,max_rec)
+            if v_new is not None:
+                d[k] = v_new
+        return d
+    elif hasattr(d_old, "__dict__"):
+        return clean_dict(d_old.__dict__,rec_level+1,max_rec)
+    else:
+        return None
 
 
-def normalize_message(message: Message) -> Dict[str, Optional[str|int]]:
-    # just fetch as dict
-    d = message.__dict__
-    d.pop("_client", None)
-    return d
+def normalize_user(from_user: User):
+    return {
+        "sender_type": 0,
+        "sender_id": from_user.id,
+        "sender_first_name": from_user.first_name,
+        "sender_last_name": from_user.last_name,
+        "sender_username": from_user.username,
+        "sender_is_verified": from_user.is_premium,
+        "sender_is_scam": from_user.is_scam or from_user.is_fake or from_user.is_deleted,
+        "sender_is_restricted": from_user.is_restricted
+    }
 
 
-def normalize_chat(chat: Chat) -> Dict[str, Optional[str|int]]:
-    chat_dict = OrderedDict()
-    chat_dict["id"] = chat.id
-    chat_dict["title"] = chat.title
-    chat_dict["chat_type"] = chat_type_dict[chat.type]
-    chat_dict["chat_username"] = chat.username
-    chat_dict["chat_description"] = chat.description
-    chat_dict["chat_members_count"] = getattr(chat, "members_count", None)
-    chat_dict["chat_invite_link"] = getattr(chat, "invite_link", None)
-    chat_dict["chat_is_verified"] = chat.is_verified
-    chat_dict["chat_is_scam"] = chat.is_scam
-    chat_dict["chat_is_support"] = chat.is_support
-    return chat_dict
+def normalize_chat(sender_chat: Chat):
+    return {
+        "sender_type": chat_type_dict[sender_chat.type],
+        "sender_id": sender_chat.id,
+        "sender_first_name": sender_chat.title,
+        "sender_username": sender_chat.username,
+        "sender_is_verified": sender_chat.is_verified,
+        "sender_is_scam": sender_chat.is_scam or sender_chat.is_fake,
+        "sender_is_restricted": sender_chat.is_restricted
+    }
+
+
+def normalize_reactions(reactions: MessageReactions) -> List[Dict[str, int]]:
+    if not reactions or not reactions.reactions:
+        return []
+    return [{r.emoji: r.count} for r in reactions.reactions]
 
 
 class MongoBackend:
@@ -100,10 +114,12 @@ class MongoBackend:
         self.db = self.conn[MONGO_DATABASE]
 
     def add_message(self, message: Message):
-        message_norm = normalize_message(message)
+        if message.outgoing:
+            return
+        message_norm = clean_dict(message)
         if not message_norm:
             return
-        print(f"Adding message: {message_norm}")
+        #print(f"Adding message: {message_norm}")
         self.db["messages"].insert_one(message_norm)
 
     def close(self):
