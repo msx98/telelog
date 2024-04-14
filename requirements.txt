@@ -4,3 +4,9 @@ mysql-connector-python
 python-dotenv
 pymongo
 deep-translator
+
+# for jupyter:
+nbformat
+ipykernel
+gradio
+typing-extensions
