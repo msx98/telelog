@@ -60,6 +60,13 @@ def normalize_message(message: Message) -> Optional[Dict[str, Optional[str|int]]
     return message_dict
 
 
+def normalize_message(message: Message) -> Dict[str, Optional[str|int]]:
+    # just fetch as dict
+    d = message.__dict__
+    d.pop("_client", None)
+    return d
+
+
 def normalize_chat(chat: Chat) -> Dict[str, Optional[str|int]]:
     chat_dict = OrderedDict()
     chat_dict["id"] = chat.id
@@ -98,3 +105,7 @@ class MongoBackend:
             return
         print(f"Adding message: {message_norm}")
         self.db["messages"].insert_one(message_norm)
+
+    def close(self):
+        assert self.conn is not None
+        self.conn.close()

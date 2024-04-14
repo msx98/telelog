@@ -1,6 +1,6 @@
 from dotenv import load_dotenv, dotenv_values
 import os
-config = dotenv_values()
+config = os.environ | dotenv_values()
 
 is_external = config.get("IS_DOCKER", None) in {None, False, 0, "False", "false", "0"}
 TELEGRAM_API_ID = config["TELEGRAM_API_ID"]
