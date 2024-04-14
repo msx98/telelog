@@ -18,6 +18,8 @@ print("Defining handlers")
 
 @app.on_message(filters.text)
 def handle_message(bot, message):
+	if hasattr(message, "chat") and hasattr(message.chat, "id") and message.chat.id == DEBUG_CHAT_ID:
+		print(f"Got message: {message}")
 	if not hasattr(message, "text"):
 		return
 	db.add_message(message)
