@@ -54,7 +54,7 @@ def normalize_message(message: Message) -> Optional[Dict[str, Optional[str|int]]
     else:
         return None
     if hasattr(message, "media"):
-        message_dict["media_type"] = media_type_dict.get(message.media, None)
+        message_dict["media_type"] = media_type_dict.get(message.media, 0) if message.media is not None else None
     message_dict["date"] = message.date
     if message.chat:
         message_dict["chat_id"] = message.chat.id
