@@ -29,14 +29,14 @@ def signal_handler(sig, frame):
 	sys.exit(0)
 
 
-@app.on_message()
+@app.on_message(~filters.private)
 def handle_message(bot, message):
 	if hasattr(message, "chat") and hasattr(message.chat, "id") and message.chat.id == DEBUG_CHAT_ID:
 		print(f"Got message: {message}")
 	db.add_message(message)
 
 
-@app.on_message(filters.text & filters.private)
+@app.on_message(filters.private)
 def handle_message_from_private(bot, message):
 	if message.text == "/count":
 		n, date = db.count_messages()
