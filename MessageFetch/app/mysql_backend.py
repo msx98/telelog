@@ -116,12 +116,13 @@ class MySQLBackend:
     def __init__(
         self,
         *,
-        MYSQL_HOST = os.environ["MYSQL_HOST"],
-        MYSQL_PORT = os.environ["MYSQL_PORT"],
-        MYSQL_USER = os.environ["MYSQL_USER"],
-        MYSQL_PASSWORD = os.environ["MYSQL_PASSWORD"],
-        MYSQL_DATABASE = os.environ["MYSQL_DATABASE"],
+        MYSQL_HOST,
+        MYSQL_PORT,
+        MYSQL_USER,
+        MYSQL_PASSWORD,
+        MYSQL_DATABASE,
         MAX_QUEUE_SIZE = 10,
+        **kwargs,
     ):
         self.conn = mysql.connector.connect(host=MYSQL_HOST,
                                             database=MYSQL_DATABASE,

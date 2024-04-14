@@ -81,15 +81,16 @@ class MongoBackend:
     def __init__(
         self,
         *,
-        HOST=os.environ["MONGO_HOST"],
-        USERNAME=os.environ["MONGO_INITDB_ROOT_USERNAME"],
-        PASSWORD=os.environ["MONGO_INITDB_ROOT_PASSWORD"],
-        DATABASE=os.environ["MONGO_DATABASE"],
+        MONGO_HOST,
+        MONGO_INITDB_ROOT_USERNAME,
+        MONGO_INITDB_ROOT_PASSWORD,
+        MONGO_DATABASE,
+        **kwargs,
     ):
-        self.conn = MongoClient(HOST, username=USERNAME, password=PASSWORD)
+        self.conn = MongoClient(MONGO_HOST, username=MONGO_INITDB_ROOT_USERNAME, password=MONGO_INITDB_ROOT_PASSWORD)
         if not self.conn:
             raise Exception("Could not connect")
-        self.db = self.conn[DATABASE]
+        self.db = self.conn[MONGO_DATABASE]
 
     def add_message(self, message: Message):
         message_norm = normalize_message(message)

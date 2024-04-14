@@ -8,18 +8,18 @@ from mongo_backend import MongoBackend
 import datetime
 from consts import *
 
+print("Connecting to DB")
+db = MySQLBackend(**config)
 
-db = MySQLBackend()
+print("Connecting to account")
 app = Client("listener", api_id=TELEGRAM_API_ID, api_hash=TELEGRAM_API_HASH, phone_number=TELEGRAM_PHONE, password=TELEGRAM_PASS)
 
+print("Defining handlers")
 
-@app.on_message(filters.text & filters.channel)
-def handle_message_from_channel(bot, message):
-	db.add_message(message)
-
-
-@app.on_message(filters.text & filters.group)
-def handle_message_from_group(bot, message):
+@app.on_message(filters.text)
+def handle_message(bot, message):
+	if not hasattr(message, "text"):
+		return
 	db.add_message(message)
 
 
@@ -35,4 +35,5 @@ def handle_message_from_private(bot, message):
 		)
 
 
+print("Launching app")
 app.run()
