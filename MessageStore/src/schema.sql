@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS messages (
     reactions TEXT CHARACTER SET utf8mb4,
     views INTEGER,
     forwards INTEGER,
+    media_type TINYINT,
     PRIMARY KEY (chat_id, message_id)
 );
 

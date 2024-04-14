@@ -2,7 +2,7 @@ from typing import Tuple, Dict, Any, Optional, List
 from collections import OrderedDict
 import pyrogram.types
 from pyrogram.types import Message, User, Chat
-from pyrogram.enums import ChatType
+from pyrogram.enums import ChatType, MessageMediaType
 import os
 import mysql.connector
 from mysql.connector import Error as MySQLError
@@ -22,11 +22,39 @@ chat_type_dict = {
 }
 
 
+media_type_dict = {
+    MessageMediaType.AUDIO: 1,
+    MessageMediaType.DOCUMENT: 2,
+    MessageMediaType.PHOTO: 3,
+    MessageMediaType.STICKER: 4,
+    MessageMediaType.VIDEO: 5,
+    MessageMediaType.ANIMATION: 6,
+    MessageMediaType.VOICE: 7,
+    MessageMediaType.VIDEO_NOTE: 8,
+    MessageMediaType.CONTACT: 9,
+    MessageMediaType.LOCATION: 10,
+    MessageMediaType.VENUE: 11,
+    MessageMediaType.POLL: 12,
+    MessageMediaType.WEB_PAGE: 13,
+    MessageMediaType.DICE: 14,
+    MessageMediaType.GAME: 15,
+}
+
+
 def normalize_message(message: Message) -> Optional[Dict[str, Optional[str|int]]]:
-    if message.text is None or message.outgoing:
+    if message.outgoing:
         return None
     message_dict = OrderedDict()
-    message_dict["text"] = message.text
+    if hasattr(message, "text") and message.text is not None:
+        message_dict["text"] = message.text
+    elif hasattr(message, "caption") and message.caption is not None:
+        message_dict["text"] = message.caption
+    elif hasattr(message, "poll") and hasattr(message.poll, "question") and message.poll.question is not None:
+        return None # FIXME - not implemented yet
+    else:
+        return None
+    if hasattr(message, "media"):
+        message_dict["media_type"] = media_type_dict.get(message.media, None)
     message_dict["date"] = message.date
     if message.chat:
         message_dict["chat_id"] = message.chat.id
