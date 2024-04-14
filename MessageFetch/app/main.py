@@ -7,14 +7,27 @@ from mysql_backend import MySQLBackend
 from mongo_backend import MongoBackend
 import datetime
 from consts import *
+import signal
+import sys
 
 print("Connecting to DB")
 db = MySQLBackend(**config)
 
+
 print("Connecting to account")
 app = Client("listener", api_id=TELEGRAM_API_ID, api_hash=TELEGRAM_API_HASH, phone_number=TELEGRAM_PHONE, password=TELEGRAM_PASS)
 
+
 print("Defining handlers")
+
+
+def signal_handler(sig, frame):
+	print("Closing DB")
+	db.close()
+	print("Closing account")
+	app.stop()
+	sys.exit(0)
+
 
 @app.on_message(filters.text)
 def handle_message(bot, message):
@@ -35,6 +48,10 @@ def handle_message_from_private(bot, message):
 			text=f"Total messages: {n}, last fetched {fetched_diff} seconds ago",
 			reply_to_message_id=message.id
 		)
+
+
+print("Adding signal handlers")
+signal.signal(signal.SIGINT, signal_handler)
 
 
 print("Launching app")

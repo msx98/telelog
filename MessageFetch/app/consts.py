@@ -14,7 +14,7 @@ MYSQL_USER = config["MYSQL_USER"]
 MYSQL_PASSWORD = config["MYSQL_PASSWORD"]
 MYSQL_DATABASE = config["MYSQL_DATABASE"]
 
-DEBUG_CHAT_ID = config.get["DEBUG_CHAT_ID"]
+DEBUG_CHAT_ID = int(config["DEBUG_CHAT_ID"])
 
 
 if is_external:

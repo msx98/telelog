@@ -188,3 +188,10 @@ class MySQLBackend:
             n, date = cur.fetchone()
             cur.close()
             return n, date
+
+    def close(self):
+        print("Obtaining lock to close")
+        with self.lock:
+            print("Obtained lock - closing")
+            self.conn.close()
+        print("Closed SQL connection")
