@@ -4,5 +4,6 @@
 **/*.session-journal
 **/__pycache__
 **/*.pyc
+**/.last_write.json
 MessageStore/mongodb/*
 MessageStore/db/*

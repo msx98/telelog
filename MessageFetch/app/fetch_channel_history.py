@@ -188,7 +188,7 @@ async def main():
         db.select_channel(all_dialogs[channel_id])
         next_possible = time.time() + 0
         async for row in client.get_chat_history(channel_id):
-            if row.id <= id_to_max_message[channel_id]:
+            if row.id <= id_to_max_message.get(channel_id, -1):
                 break
             db.add_message(row)
             channel_counts[channel_id] += 1
