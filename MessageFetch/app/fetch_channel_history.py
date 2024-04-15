@@ -163,6 +163,12 @@ async def main():
     finished: List[int] = []
     status_msg: Message = await app.send_message(DEBUG_CHAT_ID, "Starting up")
     current_dialogs: Dict[int, Dialog] = await get_dialogs()
+    
+    result = db.delete_last_write()
+    if result is not None:
+        channel_id, channel_name, delete_count = result
+        await app.send_message(f"Deleted {delete_count} messages from the write attempt to {channel_name}")
+
     stored_dialogs: Dict[int, StoredDialog] = db.get_stored_dialogs()
     kicked_channels = [v.title for k,v in stored_dialogs.items() if k not in current_dialogs.keys()]
     if kicked_channels:
@@ -179,10 +185,6 @@ async def main():
     pending = [x for x in all_channels if id_to_leftovers[x] > 0]
     finished = [x for x in all_channels if x not in pending]
     channel_counts = {channel_id: 0 for channel_id in pending}
-    result = db.delete_last_write()
-    if result is not None:
-        channel_id, channel_name, delete_count = result
-        await status_msg.edit_text(f"Deleted {delete_count} messages from the write attempt to {channel_name}")
     while pending:
         channel_id = pending.pop(0)
         db.select_channel(all_dialogs[channel_id])
