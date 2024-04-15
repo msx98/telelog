@@ -7,6 +7,7 @@ import os
 import time
 from typing import List, Dict, Tuple
 from mysql_backend import normalize_message
+import json
 
 cur = None
 conn = None
@@ -115,20 +116,20 @@ top_channels = [
 
 
 def get_channel_counts(
-        d_names: Dict[int, str],
+        d_dialogs: Dict[int, Dialog],
         d_counts: Dict[int, int],
         channels: List[int],
 ) -> str:
     s = ""
     for channel_id in channels:
-        s += f"""- {(d_names[channel_id])[:12]}: {d_counts.get(channel_id, "SKIP")}\n"""
+        s += f"""- {(d_dialogs[channel_id].chat.title)[:12]}: {d_counts.get(channel_id, "SKIP")}\n"""
     if not s:
         return "<< DONE >>"
     return s
 
 
 def get_status(
-        d_names: Dict[int, str],
+        d_dialogs: Dict[int, Dialog],
         d_counts: Dict[int, int],
         pending: List[int],
         finished: List[int],
@@ -137,20 +138,23 @@ def get_status(
     sum_counts = sum([v for k, v in d_counts.items() if k in finished]) + (d_counts[current] if current is not None else 0)
     s = ""
     s += "Pending:\n"
-    s += get_channel_counts(d_names, d_counts, [current] + pending) + "\n\n"
+    s += get_channel_counts(d_dialogs, d_counts, [current] + pending) + "\n\n"
     if current is not None:
-        s += f"""Currently working on "{d_names[current]}"\n"""
-    s += f"""Finished {len(finished)}, pending {len(pending)}, total {len(d_names)}\n"""
+        s += f"""Currently working on "{d_dialogs[current].chat.title}"\n"""
+    s += f"""Finished {len(finished)}, pending {len(pending)}, total {len(d_dialogs)}\n"""
     s += f"""Total messages: {sum_counts}"""
     return s
 
 
-async def get_dialogs() -> List[Dialog]:
+async def get_dialogs() -> Dict[int, Dialog]:
     my_dialogs = app.get_dialogs()
-    dialogs_list = list()
+    d: Dict[int, Dialog] = dict()
     async for dialog in my_dialogs:
-        dialogs_list.append(dialog)
-    return dialogs_list
+        d[dialog.chat.id] = dialog
+    return d
+
+
+from mongo_backend import StoredDialog
 
 
 async def main():
@@ -158,20 +162,30 @@ async def main():
     pending: List[int] = []
     finished: List[int] = []
     status_msg: Message = await app.send_message(DEBUG_CHAT_ID, "Starting up")
-    all_dialogs: List[Dialog] = await get_dialogs()
-    all_channels: List[int] = [dialog.chat.id for dialog in all_dialogs if dialog.chat.type == ChatType.CHANNEL]
-    id_to_name: Dict[int, str] = {dialog.chat.id: dialog.chat.title for dialog in all_dialogs}
-    await status_msg.edit_text(f"Got {len(all_channels)} channels, checking which ones are already fetched")
-    id_to_max_message: Dict[int, int] = {dialog.chat.id: db.max_message_id(dialog) for dialog in all_dialogs}
-    id_to_leftovers: Dict[int, int] = {dialog.chat.id: ((dialog.top_message.id if dialog.top_message else -1) - id_to_max_message[dialog.chat.id]) for dialog in all_dialogs}
+    current_dialogs: Dict[int, Dialog] = await get_dialogs()
+    stored_dialogs: Dict[int, StoredDialog] = db.get_stored_dialogs()
+    kicked_channels = [v.title for k,v in stored_dialogs.items() if k not in current_dialogs.keys()]
+    if kicked_channels:
+        newl = "\n"
+        await app.send_message(DEBUG_CHAT_ID, f"""Sleeping because kicked from {len(kicked_channels)} channels:{newl}{(","+newl).join(kicked_channels)}""")
+        time.sleep(60)
+    all_dialogs = {k:dialog for k,dialog in current_dialogs.items() if dialog.chat.type == ChatType.CHANNEL}
+    await status_msg.edit_text(f"Got {len(all_dialogs)} channels, checking which ones are already fetched")
+    id_to_max_message: Dict[int, int] = {k: v.max_id for k, v in stored_dialogs.items() if k in all_dialogs.keys()}
+    id_to_leftovers: Dict[int, int] = {dialog.chat.id: ((dialog.top_message.id if dialog.top_message else -1) - id_to_max_message.get(dialog.chat.id,-1)) for dialog in all_dialogs.values()}
     sorted_channels = sorted(id_to_leftovers.items(), key=lambda x: x[1], reverse=False) # sort in ascending order
-    all_channels = [x[0] for x in sorted_channels if x[0] in all_channels]
+    sorted_channels_with_names = [(x[0], all_dialogs[x[0]].chat.title, x[1]) for x in sorted_channels]
+    all_channels = [x[0] for x in sorted_channels if x[0] in all_dialogs.keys()]
     pending = [x for x in all_channels if id_to_leftovers[x] > 0]
-    #finished = [x[0] for x in top_channels]
     finished = [x for x in all_channels if x not in pending]
     channel_counts = {channel_id: 0 for channel_id in pending}
+    result = db.delete_last_write()
+    if result is not None:
+        channel_id, channel_name, delete_count = result
+        await status_msg.edit_text(f"Deleted {delete_count} messages from the write attempt to {channel_name}")
     while pending:
         channel_id = pending.pop(0)
+        db.select_channel(all_dialogs[channel_id])
         next_possible = time.time() + 0
         async for row in client.get_chat_history(channel_id):
             if row.id <= id_to_max_message[channel_id]:
@@ -180,7 +194,7 @@ async def main():
             channel_counts[channel_id] += 1
             if time.time() >= next_possible:
                 try:
-                    await status_msg.edit_text(get_status(id_to_name, channel_counts, pending, finished, channel_id))
+                    await status_msg.edit_text(get_status(current_dialogs, channel_counts, pending, finished, channel_id))
                     next_possible = time.time() + 10
                 except FloodWait as e:
                     print(f"Got floodwait with {e.value}")
@@ -191,7 +205,8 @@ async def main():
                     next_possible = time.time() + 10
                     pass
         finished.append(channel_id)
-    await status_msg.edit_text(get_status(id_to_name, channel_counts, pending, finished, None))
+        db.unselect_channel()
+    await status_msg.edit_text(get_status(current_dialogs, channel_counts, pending, finished, None))
 
 
 #@app.on_message(filters.private & filters.command("status"))

@@ -8,6 +8,7 @@ import pyrogram
 from pymongo import MongoClient
 from enum import Enum
 import datetime
+import json
 
 
 chat_type_dict = {
@@ -96,6 +97,12 @@ def normalize_reactions(reactions: MessageReactions) -> List[Dict[str, int]]:
     return [{r.emoji: r.count} for r in reactions.reactions]
 
 
+from collections import namedtuple
+
+
+StoredDialog = namedtuple("Dialog", ["title", "max_id"])
+
+
 class MongoBackend:
     conn: MongoClient = None
 
@@ -112,31 +119,65 @@ class MongoBackend:
         if not self.conn:
             raise Exception("Could not connect")
         self.db = self.conn[MONGO_DATABASE]
+        self._stored_dialogs: Dict[int, StoredDialog] = None
+        self.selected_channel: pyrogram.types.Dialog = None
 
     def add_message(self, message: Message):
         if message.outgoing:
             return
+        if message.chat:
+            assert self.selected_channel is not None
+            assert message.chat.id == self.selected_channel.chat.id
         message_norm = clean_dict(message)
         if not message_norm:
             return
         #print(f"Adding message: {message_norm}")
         self.db["messages"].insert_one(message_norm)
     
-    def check_if_needs_update(self, dialog: pyrogram.types.Dialog) -> bool:
-        channel_id = dialog.chat.id
-        m = self.db["messages"].find_one({"chat.id": channel_id}, sort=[("id", -1)])
-        if m is None:
-            return True
-        current_top_message = dialog.top_message
-        return current_top_message.id > m["id"]
-
-    def max_message_id(self, dialog: pyrogram.types.Dialog) -> int:
-        channel_id = dialog.chat.id
-        m = self.db["messages"].find_one({"chat.id": channel_id}, sort=[("id", -1)])
-        if m is None:
-            return -1
-        return m["id"]
+    def get_stored_dialogs(self) -> Dict[int, StoredDialog]:
+        # Return: d[channel_id] = (channel_name, max_message_id)
+        cursor = self.db["messages"].aggregate([
+            {"$group": {"_id": "$chat.id", "max_id": {"$max": "$id"}, "channel_name": {"$first": "$chat.title"}}}
+        ])
+        d = dict()
+        for row in cursor:
+            d[row["_id"]] = StoredDialog(title=row["channel_name"], max_id=row["max_id"])
+        self._stored_dialogs = d
+        return d
 
     def close(self):
         assert self.conn is not None
         self.conn.close()
+    
+    def select_channel(self, dialog: pyrogram.types.Dialog):
+        assert self.selected_channel is None
+        self.selected_channel = dialog
+        assert self._stored_dialogs
+        max_id = self._stored_dialogs[dialog.chat.id].max_id if dialog.chat.id in self._stored_dialogs else -1
+        channel_id = dialog.chat.id
+        with open(".last_write.json", "w") as f:
+            f.write(json.dumps({
+                "channel_id": channel_id,
+                "channel_name": dialog.chat.title,
+                "id_end": max_id,
+                "id_start": dialog.top_message.id if dialog.top_message else max_id
+            }))
+    
+    def unselect_channel(self):
+        assert self.selected_channel is not None
+        self.selected_channel = None
+        os.remove(".last_write.json")
+    
+    def delete_last_write(self):
+        if not os.path.exists(".last_write.json"):
+            return None
+        with open(".last_write.json", "r") as f:
+            data = json.loads(f.read())
+        channel_id = data["channel_id"]
+        channel_name = data["channel_name"]
+        id_end = data["id_end"]
+        id_start = data["id_start"]
+        assert id_end <= id_start # we receive messages in reverse
+        r = self.db["messages"].delete_many({"chat.id": channel_id, "id": {"$gt": id_end, "$lte": id_start}})
+        delete_count = r.deleted_count
+        return (channel_id, channel_name, delete_count)
