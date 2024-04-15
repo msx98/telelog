@@ -40,7 +40,7 @@ media_type_dict = {
 
 primitive_types = (bool, int, str, float, datetime.datetime, type(None))
 unparseable_types = (pyrogram.client.Client,)
-def clean_dict(d_old, rec_level=1, max_rec=10) -> Dict:
+def clean_dict(d_old, rec_level=1, max_rec=20) -> Dict:
     if isinstance(d_old, unparseable_types):
         return None
     if rec_level > max_rec:
@@ -121,6 +121,21 @@ class MongoBackend:
             return
         #print(f"Adding message: {message_norm}")
         self.db["messages"].insert_one(message_norm)
+    
+    def check_if_needs_update(self, dialog: pyrogram.types.Dialog) -> bool:
+        channel_id = dialog.chat.id
+        m = self.db["messages"].find_one({"chat.id": channel_id}, sort=[("id", -1)])
+        if m is None:
+            return True
+        current_top_message = dialog.top_message
+        return current_top_message.id > m["id"]
+
+    def max_message_id(self, dialog: pyrogram.types.Dialog) -> int:
+        channel_id = dialog.chat.id
+        m = self.db["messages"].find_one({"chat.id": channel_id}, sort=[("id", -1)])
+        if m is None:
+            return -1
+        return m["id"]
 
     def close(self):
         assert self.conn is not None
