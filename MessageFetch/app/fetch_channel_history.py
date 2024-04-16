@@ -75,6 +75,9 @@ import signal
 import sys
 from typing import Optional
 
+os.makedirs(config["SESSION_DIR"], exist_ok=True)
+
+
 print("Connecting to DB")
 config["MONGO_DATABASE"] = "messages_new"
 db = MongoBackend(**config)
@@ -114,6 +117,10 @@ top_channels = [
     (-1001474443960, 'מבזקי רעם - מבזקי חדשות בזמן אמת', 116313),
 ]
 
+additional_channels = {
+    -1001425940518, # חדשות בזמן בטלגרם - קבוצת החדשות
+}
+
 
 def get_channel_counts(
         d_dialogs: Dict[int, Dialog],
@@ -150,7 +157,17 @@ class StatusMessage:
     
     async def start(self):
         assert self.message is None
-        self.message = await app.send_message(DEBUG_CHAT_ID, "Starting up")
+        if os.exists(f"{SESSION_DIR}/.status_message.tmp"):
+            with open("{SESSION_DIR}/.status_message.tmp", "r") as f:
+                message = await app.get_messages(DEBUG_CHAT_ID, int(f.read().strip()))
+                if isinstance(message, list):
+                    message = message[0] if (len(message) == 1) else None
+        if isinstance(message, Message):
+            self.message = message
+        else:
+            self.message = await app.send_message(DEBUG_CHAT_ID, "Starting up")
+            with open(f"{SESSION_DIR}/.status_message.tmp", "w") as f:
+                f.write(str(self.message.id))
     
     def announce_update(self):
         self.last_update = time.time()
@@ -247,7 +264,7 @@ async def main():
         #missing_dialogs: Dict[int, StoredDialog] = {k: stored_dialogs[k] for k in stored_dialogs.keys() if k not in stored_dialogs_fast.keys()}
         kicked_channels = [v.title for k,v in stored_dialogs.items() if k not in current_dialogs.keys()]
         await status_msg.update(kicked=kicked_channels)
-        all_dialogs = {k:dialog for k,dialog in current_dialogs.items() if dialog.chat.type == ChatType.CHANNEL}
+        all_dialogs = {k:dialog for k,dialog in current_dialogs.items() if (dialog.chat.type == ChatType.CHANNEL) or (dialog.chat.id in additional_channels)}
         await status_msg.update(d_dialogs=all_dialogs)
         id_to_max_message: Dict[int, int] = {k: v.max_id for k, v in stored_dialogs.items() if k in all_dialogs.keys()}
         id_to_leftovers: Dict[int, int] = {dialog.chat.id: ((dialog.top_message.id if dialog.top_message else -1) - id_to_max_message.get(dialog.chat.id,-1)) for dialog in all_dialogs.values()}
