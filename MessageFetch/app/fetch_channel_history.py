@@ -190,7 +190,7 @@ class StatusMessage:
         await self.update(last_recover=time.time())
     
     async def announce_finish(self):
-        await self.update(force=True, last_finish=time.time())
+        await self.update(last_finish=time.time())
     
     async def _update(
             self,
