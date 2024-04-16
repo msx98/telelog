@@ -60,6 +60,7 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
       MONGO_DATABASE: ${MONGO_DATABASE}
       DEBUG_CHAT_ID: ${DEBUG_CHAT_ID}
+      SESSION_DIR: ${SESSION_DIR}
       IS_DOCKER: true
     volumes:
       - ./MessageFetch/app:/app

@@ -113,6 +113,7 @@ class MongoBackend:
         MONGO_INITDB_ROOT_USERNAME,
         MONGO_INITDB_ROOT_PASSWORD,
         MONGO_DATABASE,
+        SESSION_DIR,
         **kwargs,
     ):
         self.conn = MongoClient(MONGO_HOST, username=MONGO_INITDB_ROOT_USERNAME, password=MONGO_INITDB_ROOT_PASSWORD)
@@ -121,6 +122,7 @@ class MongoBackend:
         self.db = self.conn[MONGO_DATABASE]
         self._stored_dialogs: Dict[int, StoredDialog] = None
         self.selected_channel: pyrogram.types.Dialog = None
+        self.session_dir = SESSION_DIR
 
     def add_message(self, message: Message):
         if message.outgoing:
@@ -166,7 +168,7 @@ class MongoBackend:
         assert self._stored_dialogs
         max_id = self._stored_dialogs[dialog.chat.id].max_id if dialog.chat.id in self._stored_dialogs else -1
         channel_id = dialog.chat.id
-        with open(".last_write.json", "w") as f:
+        with open(f"{self.session_dir}/.last_write.json", "w") as f:
             f.write(json.dumps({
                 "channel_id": channel_id,
                 "channel_name": dialog.chat.title,
@@ -198,12 +200,12 @@ class MongoBackend:
             upsert=True,
         )
         self.selected_channel = None
-        os.remove(".last_write.json")
+        os.remove(f"{self.session_dir}/.last_write.json")
     
     def delete_last_write(self):
-        if not os.path.exists(".last_write.json"):
+        if not os.path.exists(f"{self.session_dir}/.last_write.json"):
             return None
-        with open(".last_write.json", "r") as f:
+        with open(f"{self.session_dir}/.last_write.json", "r") as f:
             data = json.loads(f.read())
         channel_id = data["channel_id"]
         channel_name = data["channel_name"]

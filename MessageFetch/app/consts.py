@@ -3,6 +3,13 @@ import os
 config = os.environ | dotenv_values()
 
 is_external = config.get("IS_DOCKER", None) in {None, False, 0, "False", "false", "0"}
+
+if is_external:
+    config["MYSQL_HOST"] = "127.0.0.1"
+    config["MYSQL_PORT"] = "3308"
+    config["MONGO_HOST"] = "mongodb://localhost:27017/"
+    config["SESSION_DIR"] = "./MessageFetch/app/" + config["SESSION_DIR"]
+
 TELEGRAM_API_ID = config["TELEGRAM_API_ID"]
 TELEGRAM_API_HASH = config["TELEGRAM_API_HASH"]
 TELEGRAM_PHONE = config["TELEGRAM_PHONE"]
@@ -20,9 +27,4 @@ MONGO_HOST = config["MONGO_HOST"]
 MONGO_INITDB_ROOT_USERNAME = config["MONGO_INITDB_ROOT_USERNAME"]
 MONGO_INITDB_ROOT_PASSWORD = config["MONGO_INITDB_ROOT_PASSWORD"]
 MONGO_DATABASE = config["MONGO_DATABASE"]
-
-
-if is_external:
-    config["MYSQL_HOST"] = "127.0.0.1"
-    config["MYSQL_PORT"] = "3308"
-    config["MONGO_HOST"] = "mongodb://localhost:27017/"
+SESSION_DIR = config["SESSION_DIR"]
