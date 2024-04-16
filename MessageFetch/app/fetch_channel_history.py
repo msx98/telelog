@@ -246,51 +246,52 @@ async def main():
     status_msg = StatusMessage()
     await status_msg.start()
 
-    channel_counts: Dict[int, int] = dict()
-    pending: List[int] = []
-    finished: List[int] = []
-    current_dialogs: Dict[int, Dialog] = await get_dialogs()
-    await status_msg.update(d_dialogs=current_dialogs, d_counts=channel_counts, pending=pending, finished=finished, current=None)
-    
-    result = db.delete_last_write()
-    if result is not None:
-        channel_id, channel_name, delete_count = result
-        print(f"Deleted {delete_count} messages from the write attempt to {channel_name}")
-        await status_msg.announce_recover()
+    while True:
+        channel_counts: Dict[int, int] = dict()
+        pending: List[int] = []
+        finished: List[int] = []
+        current_dialogs: Dict[int, Dialog] = await get_dialogs()
+        await status_msg.update(d_dialogs=current_dialogs, d_counts=channel_counts, pending=pending, finished=finished, current=None)
+        
+        result = db.delete_last_write()
+        if result is not None:
+            channel_id, channel_name, delete_count = result
+            print(f"Deleted {delete_count} messages from the write attempt to {channel_name}")
+            await status_msg.announce_recover()
 
-    stored_dialogs_fast: Dict[int, StoredDialog] = db.get_stored_dialogs_fast()
-    stored_dialogs: Dict[int, StoredDialog] = stored_dialogs_fast#db.get_stored_dialogs()
-    #missing_dialogs: Dict[int, StoredDialog] = {k: stored_dialogs[k] for k in stored_dialogs.keys() if k not in stored_dialogs_fast.keys()}
-    kicked_channels = [v.title for k,v in stored_dialogs.items() if k not in current_dialogs.keys()]
-    await status_msg.update(kicked=kicked_channels)
-    all_dialogs = {k:dialog for k,dialog in current_dialogs.items() if (dialog.chat.type == ChatType.CHANNEL) or (dialog.chat.id in additional_channels)}
-    await status_msg.update(d_dialogs=all_dialogs)
-    id_to_max_message: Dict[int, int] = {k: v.max_id for k, v in stored_dialogs.items() if k in all_dialogs.keys()}
-    id_to_leftovers: Dict[int, int] = {dialog.chat.id: ((dialog.top_message.id if dialog.top_message else -1) - id_to_max_message.get(dialog.chat.id,-1)) for dialog in all_dialogs.values()}
-    sorted_channels = sorted(id_to_leftovers.items(), key=lambda x: x[1], reverse=False) # sort in ascending order
-    sorted_channels_with_names = [(x[0], all_dialogs[x[0]].chat.title, x[1]) for x in sorted_channels]
-    all_channels = [x[0] for x in sorted_channels if x[0] in all_dialogs.keys()]
-    pending += [x for x in all_channels if id_to_leftovers[x] > 0]
-    finished += [x for x in all_channels if x not in pending]
-    channel_counts |= {channel_id: 0 for channel_id in pending}
-    await status_msg.update()
-    while pending:
-        channel_id = pending.pop(0)
-        assert channel_id is not None
-        await status_msg.update(current=channel_id)
-        db.select_channel(all_dialogs[channel_id])
-        async for row in client.get_chat_history(channel_id):
-            diff = row.id - id_to_max_message.get(channel_id, -1)
-            #assert diff < 30
-            if diff <= 0:
-                break
-            db.add_message(row)
-            channel_counts[channel_id] += 1
-            await status_msg.update()
-        finished.append(channel_id)
-        db.unselect_channel()
-    await status_msg.announce_finish()
-    print("Reached finish")
+        stored_dialogs_fast: Dict[int, StoredDialog] = db.get_stored_dialogs_fast()
+        stored_dialogs: Dict[int, StoredDialog] = stored_dialogs_fast#db.get_stored_dialogs()
+        #missing_dialogs: Dict[int, StoredDialog] = {k: stored_dialogs[k] for k in stored_dialogs.keys() if k not in stored_dialogs_fast.keys()}
+        kicked_channels = [v.title for k,v in stored_dialogs.items() if k not in current_dialogs.keys()]
+        await status_msg.update(kicked=kicked_channels)
+        all_dialogs = {k:dialog for k,dialog in current_dialogs.items() if (dialog.chat.type == ChatType.CHANNEL) or (dialog.chat.id in additional_channels)}
+        await status_msg.update(d_dialogs=all_dialogs)
+        id_to_max_message: Dict[int, int] = {k: v.max_id for k, v in stored_dialogs.items() if k in all_dialogs.keys()}
+        id_to_leftovers: Dict[int, int] = {dialog.chat.id: ((dialog.top_message.id if dialog.top_message else -1) - id_to_max_message.get(dialog.chat.id,-1)) for dialog in all_dialogs.values()}
+        sorted_channels = sorted(id_to_leftovers.items(), key=lambda x: x[1], reverse=False) # sort in ascending order
+        sorted_channels_with_names = [(x[0], all_dialogs[x[0]].chat.title, x[1]) for x in sorted_channels]
+        all_channels = [x[0] for x in sorted_channels if x[0] in all_dialogs.keys()]
+        pending += [x for x in all_channels if id_to_leftovers[x] > 0]
+        finished += [x for x in all_channels if x not in pending]
+        channel_counts |= {channel_id: 0 for channel_id in pending}
+        await status_msg.update()
+        while pending:
+            channel_id = pending.pop(0)
+            assert channel_id is not None
+            await status_msg.update(current=channel_id)
+            db.select_channel(all_dialogs[channel_id])
+            async for row in client.get_chat_history(channel_id):
+                diff = row.id - id_to_max_message.get(channel_id, -1)
+                #assert diff < 30
+                if diff <= 0:
+                    break
+                db.add_message(row)
+                channel_counts[channel_id] += 1
+                await status_msg.update()
+            finished.append(channel_id)
+            db.unselect_channel()
+        await status_msg.announce_finish()
+        print("Reached finish")
 
 
 #@app.on_message(filters.private & filters.command("status"))
