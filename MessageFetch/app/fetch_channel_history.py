@@ -122,7 +122,8 @@ def get_channel_counts(
 ) -> str:
     s = ""
     for channel_id in channels:
-        s += f"""- {(d_dialogs[channel_id].chat.title)[:12]}: {d_counts.get(channel_id, "SKIP")}\n"""
+        if channel_id is not None:
+            s += f"""- {(d_dialogs[channel_id].chat.title)[:12]}: {d_counts.get(channel_id, "SKIP")}\n"""
     if not s:
         return "<< DONE >>"
     return s
@@ -187,6 +188,7 @@ async def main():
     channel_counts = {channel_id: 0 for channel_id in pending}
     while pending:
         channel_id = pending.pop(0)
+        assert channel_id is not None
         db.select_channel(all_dialogs[channel_id])
         next_possible = time.time() + 0
         async for row in client.get_chat_history(channel_id):
