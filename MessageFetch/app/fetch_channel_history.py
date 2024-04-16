@@ -167,7 +167,7 @@ async def main():
     result = db.delete_last_write()
     if result is not None:
         channel_id, channel_name, delete_count = result
-        await app.send_message(f"Deleted {delete_count} messages from the write attempt to {channel_name}")
+        await app.send_message(DEBUG_CHAT_ID, f"Deleted {delete_count} messages from the write attempt to {channel_name}")
 
     stored_dialogs: Dict[int, StoredDialog] = db.get_stored_dialogs()
     kicked_channels = [v.title for k,v in stored_dialogs.items() if k not in current_dialogs.keys()]
