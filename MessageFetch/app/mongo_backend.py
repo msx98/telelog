@@ -174,6 +174,21 @@ class MongoBackend:
                 "id_start": dialog.top_message.id if dialog.top_message else max_id
             }))
     
+    def delete_channel(self, channel_id: int):
+        assert self.selected_channel is None
+        self.db["messages"].delete_many({"chat.id": channel_id})
+        self.db["dialogs"].delete_many({"_id": channel_id})
+    
+    def find_channel(self, search_str: str) -> List[Dict[str, Any]]:
+        cursor = self.db["dialogs"].find({"chat.title": {"$regex": search_str, "$options": "i"}})
+        return list(cursor)
+
+    def count_messages(self) -> int:
+        return self.db["messages"].count_documents({})
+
+    def count_dialogs(self) -> int:
+        return self.db["dialogs"].count_documents({})
+    
     def unselect_channel(self):
         assert self.selected_channel is not None
         cleaned_dialog = clean_dict(self.selected_channel)
