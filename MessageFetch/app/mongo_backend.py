@@ -167,7 +167,7 @@ class MongoBackend:
         assert self.selected_channel is not None
         cleaned_dialog = clean_dict(self.selected_channel)
         self.db["dialogs"].update_one(
-            {'_id': cleaned_dialog['id']}, 
+            {'_id': cleaned_dialog['chat']['id']}, 
             {'$set': cleaned_dialog}, 
             upsert=True,
         )
