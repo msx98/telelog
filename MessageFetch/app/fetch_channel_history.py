@@ -157,13 +157,13 @@ class StatusMessage:
     
     async def start(self):
         assert self.message is None
-        if os.exists(f"{SESSION_DIR}/.status_message.tmp"):
+        if os.path.exists(f"{SESSION_DIR}/.status_message.tmp"):
             with open("{SESSION_DIR}/.status_message.tmp", "r") as f:
-                message = await app.get_messages(DEBUG_CHAT_ID, int(f.read().strip()))
-                if isinstance(message, list):
-                    message = message[0] if (len(message) == 1) else None
-        if isinstance(message, Message):
-            self.message = message
+                messages = await app.get_messages(DEBUG_CHAT_ID, int(f.read().strip()))
+                if isinstance(messages, list) and (len(messages) == 1):
+                    self.message = messages[0]
+                elif isinstance(messages, Message):
+                    self.message = messages
         else:
             self.message = await app.send_message(DEBUG_CHAT_ID, "Starting up")
             with open(f"{SESSION_DIR}/.status_message.tmp", "w") as f:
