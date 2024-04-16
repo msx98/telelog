@@ -165,6 +165,12 @@ class MongoBackend:
     
     def unselect_channel(self):
         assert self.selected_channel is not None
+        cleaned_dialog = clean_dict(self.selected_channel)
+        self.db["dialogs"].update_one(
+            {'_id': cleaned_dialog['id']}, 
+            {'$set': cleaned_dialog}, 
+            upsert=True,
+        )
         self.selected_channel = None
         os.remove(".last_write.json")
     
