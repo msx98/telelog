@@ -139,9 +139,20 @@ class MongoBackend:
         cursor = self.db["messages"].aggregate([
             {"$group": {"_id": "$chat.id", "max_id": {"$max": "$id"}, "channel_name": {"$first": "$chat.title"}}}
         ])
+        #cursor = self.db["dialogs"].find() # FIXME - use this once dialogs collection is fixed
         d = dict()
         for row in cursor:
             d[row["_id"]] = StoredDialog(title=row["channel_name"], max_id=row["max_id"])
+            #d[row["_id"]] = StoredDialog(title=row["chat"]["title"], max_id=row["top_message"]["id"] if ("top_message" in row) else -1)
+        self._stored_dialogs = d
+        return d
+
+    def get_stored_dialogs_fast(self) -> Dict[int, StoredDialog]:
+        # Return: d[channel_id] = (channel_name, max_message_id)
+        cursor = self.db["dialogs"].find() # FIXME - use this once dialogs collection is fixed
+        d = dict()
+        for row in cursor:
+            d[row["_id"]] = StoredDialog(title=row["chat"]["title"], max_id=row["top_message"]["id"] if ("top_message" in row) else -1)
         self._stored_dialogs = d
         return d
 

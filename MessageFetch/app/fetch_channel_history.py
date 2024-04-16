@@ -242,7 +242,9 @@ async def main():
             print(f"Deleted {delete_count} messages from the write attempt to {channel_name}")
             await status_msg.announce_recover()
 
-        stored_dialogs: Dict[int, StoredDialog] = db.get_stored_dialogs()
+        stored_dialogs_fast: Dict[int, StoredDialog] = db.get_stored_dialogs_fast()
+        stored_dialogs: Dict[int, StoredDialog] = stored_dialogs_fast#db.get_stored_dialogs()
+        #missing_dialogs: Dict[int, StoredDialog] = {k: stored_dialogs[k] for k in stored_dialogs.keys() if k not in stored_dialogs_fast.keys()}
         kicked_channels = [v.title for k,v in stored_dialogs.items() if k not in current_dialogs.keys()]
         await status_msg.update(kicked=kicked_channels)
         all_dialogs = {k:dialog for k,dialog in current_dialogs.items() if dialog.chat.type == ChatType.CHANNEL}
@@ -262,7 +264,9 @@ async def main():
             await status_msg.update(current=channel_id)
             db.select_channel(all_dialogs[channel_id])
             async for row in client.get_chat_history(channel_id):
-                if row.id <= id_to_max_message.get(channel_id, -1):
+                diff = row.id - id_to_max_message.get(channel_id, -1)
+                #assert diff < 30
+                if diff <= 0:
                     break
                 db.add_message(row)
                 channel_counts[channel_id] += 1
@@ -270,6 +274,7 @@ async def main():
             finished.append(channel_id)
             db.unselect_channel()
         await status_msg.announce_finish()
+        print("Reached finish")
 
 
 #@app.on_message(filters.private & filters.command("status"))
