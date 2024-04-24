@@ -147,7 +147,6 @@ def signal_handler(sig, frame):
         break_signal = True
         print("Exiting peacefully (1)")
 
-signal.signal(signal.SIGINT, signal_handler)
 
 week_seconds = 60 * 60 * 24 * 7
 day_seconds = 60 * 60 * 24
@@ -176,13 +175,96 @@ def pretty_time(seconds: float) -> str:
     s += f"{seconds:.2f}s"
     return s
 
+import random
+from math import ceil
+hebrew_alphabet = "םןץףךאבגדהוזחטיכלמנסעפצקרשת"
+def calculate_warmup_gain(batch_size: int, do_print: bool = True) -> float:
+    min_reps = 128
+    total_reps = max(min_reps, batch_size)
+    total_reps_2 = int(ceil(total_reps / batch_size))
+    total_reps_1 = total_reps_2 * batch_size
+    random_strings_warmup_0 = ["".join(random.choices(hebrew_alphabet, k=20)) for _ in range(1)]
+    random_strings_warmup_1 = ["".join(random.choices(hebrew_alphabet, k=20)) for _ in range(total_reps_1)]
+    random_strings_warmup_2 = [["".join(random.choices(hebrew_alphabet, k=20)) for _ in range(batch_size)] for _ in range(total_reps_2)]
+    if do_print:
+        print("Warming up - stage 0")
+    _ = model.encode(random_strings_warmup_0)
+    if do_print:
+        print(f"Warming up - stage 1 with {total_reps_1} strings")
+    warmup_count_1 = len(random_strings_warmup_1)
+    warmup_start = time.time()
+    for i in range(warmup_count_1):
+        _ = model.encode(random_strings_warmup_1[i])
+    warmup_elapsed_1 = time.time() - warmup_start
+    warmup_spm_1 = warmup_elapsed_1 / warmup_count_1
+    warmup_mps_1 = warmup_count_1 / warmup_elapsed_1
+    if do_print:
+        print(f"Warmup stage 1 took {warmup_elapsed_1:.2f} seconds")
+        print(f"Warming up - stage 2 with {total_reps_2} batches of {batch_size} strings each ({total_reps_1} strings)")
+    warmup_count_2 = batch_size * total_reps_2
+    warmup_start = time.time()
+    for i in range(total_reps_2):
+        encodings = model.encode(random_strings_warmup_2[i])
+    warmup_elapsed_2 = time.time() - warmup_start
+    assert len(encodings) == batch_size
+    del encodings
+    warmup_spm_2 = warmup_elapsed_2 / warmup_count_2
+    warmup_mps_2 = warmup_count_2 / warmup_elapsed_2
+    if do_print:
+        print(f"Warmup stage 2 took {warmup_elapsed_2:.2f} seconds")
+    warmup_parallel_gain = warmup_mps_2 / warmup_mps_1
+    if do_print:
+        print(f"Warmup parallel gain: {warmup_parallel_gain:.2f}")
+    return warmup_parallel_gain, warmup_elapsed_2
+
+
+def find_optimal_batch_size() -> int:
+    print("Searching for optimal gain")
+    max_warmup_parallel_gain = None
+    batch_size = 1
+    batch_size_left, batch_size_right = batch_size, batch_size
+    max_warmup_parallel_gain = -1
+    while True:
+        print(f"Trying batch size {batch_size}")
+        warmup_parallel_gain_cur, _ = calculate_warmup_gain(batch_size, do_print=False)
+        print(f"Batch size {batch_size}: warmup gain: {warmup_parallel_gain_cur:.2f}")
+        if warmup_parallel_gain_cur >= max_warmup_parallel_gain:
+            batch_size_left = batch_size
+            batch_size *= 2
+            batch_size_right = batch_size
+            max_warmup_parallel_gain = max(warmup_parallel_gain_cur, max_warmup_parallel_gain)
+        else:
+            break
+    print(f"Searching between {batch_size_left} and {batch_size_right}")
+    while batch_size_left < batch_size_right:
+        batch_size = (batch_size_left + batch_size_right) // 2
+        warmup_parallel_gain_cur, _ = calculate_warmup_gain(batch_size, do_print=False)
+        print(f"Batch size {batch_size}: warmup gain: {warmup_parallel_gain_cur:.2f}")
+        if warmup_parallel_gain_cur > max_warmup_parallel_gain:
+            batch_size_left = batch_size
+            max_warmup_parallel_gain = warmup_parallel_gain_cur
+        else:
+            batch_size_right = batch_size - 1
+    print(f"Optimal batch size: {batch_size_left}")
+    return batch_size_left
+
+#print(calculate_warmup_gain(1000, do_print=True))
+batch_size = 32#find_optimal_batch_size()
+warmup_parallel_gain, warmup_elapsed_2 = calculate_warmup_gain(batch_size)
+
+
+signal.signal(signal.SIGINT, signal_handler)
+
+
 def recalc_rate():
     global is_running, processed_count_channel, processed_count, count_messages, count_messages_channel
     current_time = time.time()
     last_count = processed_count
     last_recalc = current_time
-    RECALC_EVERY_SECS = 3
+    RECALC_EVERY_SECS = warmup_elapsed_2 // 10
+    ANNOUNCE_IDLE_AFTER = warmup_elapsed_2
     next_recalc = current_time + RECALC_EVERY_SECS
+    next_announce_idle = current_time + ANNOUNCE_IDLE_AFTER
     while is_running:
         current_time = time.time()
         if current_time >= next_recalc:
@@ -191,7 +273,9 @@ def recalc_rate():
             elapsed_intermediate = (current_time - last_recalc)
             #rate_mps = new_count / elapsed_intermediate
             if new_count == 0:
-                print(f"{cid}: Rate > {elapsed_intermediate:.2f} spm")
+                if current_time >= next_announce_idle:
+                    print(f"{cid}: Rate > {elapsed_intermediate:.2f} spm")
+                    next_announce_idle = current_time + ANNOUNCE_IDLE_AFTER
                 continue
             #assert new_count > 0
             rate_spm = elapsed_intermediate / new_count
@@ -225,25 +309,6 @@ def send_batch():
     processed_count += i
     processed_count_channel += i
     batch_i = 0
-
-
-print("Warming up - stage 1")
-warmup_start = time.time()
-warmup_count_1 = 10
-for i in range(warmup_count_1):
-    _ = model.encode(["בוקר טוב עולם, מה שלום כולם?"])
-warmup_elapsed_1 = time.time() - warmup_start
-warmup_spm_1 = warmup_elapsed_1 / warmup_count_1
-print(f"Warmup stage 1 took {warmup_elapsed_1:.2f} seconds")
-print("Warming up - stage 2")
-warmup_start = time.time()
-warmup_count_2 = batch_size
-_ = model.encode(["בוקר טוב עולם, מה שלום כולם?"]*warmup_count_2)
-warmup_elapsed_2 = time.time() - warmup_start
-warmup_spm_2 = warmup_elapsed_2 / warmup_count_2
-print(f"Warmup stage 2 took {warmup_elapsed_2:.2f} seconds")
-warmup_parallel_gain = warmup_spm_2 / warmup_spm_1
-print(f"Warmup parallel gain: {warmup_parallel_gain:.2f}")
 
 
 print("Starting to embed")
