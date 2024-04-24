@@ -290,7 +290,6 @@ def recalc_rate():
 t = threading.Thread(target=recalc_rate)
 
 batch_i = 0
-batch_size = 1000
 batch = [{"cid": None, "mid": None, "text": None, "embed": None} for _ in range(batch_size)]
 current_msgs = set()
 
