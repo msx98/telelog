@@ -8,3 +8,4 @@
 **/*.session/*
 MessageStore/mongodb/*
 MessageStore/db/*
+logs/*
