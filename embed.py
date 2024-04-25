@@ -19,6 +19,7 @@ from sentence_transformers import SentenceTransformer
 import time
 import threading
 import signal
+import psycopg2
 
 print("Defining environment")
 
@@ -38,11 +39,11 @@ get_pipeline = lambda chat_id: [
         "$project": {
             "cid": "$chat.id",
             "mid": "$id",
-            "text": 1,
-            "caption": 1,
+            "text": {"$ifNull": ["$text", "$caption"]},
             "reactions": 1,
-            #"views": 1,
+            "views": 1,
             "forwards": 1,
+            "date": 1,
         }
     },
     {
@@ -77,7 +78,7 @@ get_pipeline = lambda chat_id: [
                 "$concat": [
                     "<<TEXT>>",
                     {"$replaceAll": {
-                        "input": {"$ifNull": ["$text", "$caption"]},
+                        "input": "$text",
                         "find": "\n\nכדי להגיב לכתבה לחצו כאן",
                         "replacement": "",
                     }},
@@ -94,10 +95,26 @@ get_pipeline = lambda chat_id: [
             "cid": 1,
             "mid": 1,
             "text": "$text_with_reactions",
+            "reactions": 1,
+            "views": 1,
+            "forwards": 1,
+            "date": 1,
         }
     },
     #{"$limit": 100}
 ]
+def process_msg(result: Dict[str, Any]) -> str:
+    # cid, mid, text, caption, reactions, views, forwards
+    text = result.get("text", result.get("caption", None))
+    if text is None:
+        return None
+    reactions_str = ", ".join([f"{r['emoji']}:{r['count']}" for r in result.get("reactions", {"reactions": []}).get("reactions", [])])
+    forwards_str = f"FORWARDS:{result.get('forwards', 0)};" if "forwards" in result else ""
+    views_str = f"VIEWS:{result.get('views', 0)};" if "views" in result else ""
+    return f"<<TEXT>>{text}<<SENTIMENT>>{views_str}{forwards_str}{reactions_str}"
+
+get_pipeline_fast = lambda chat_id: get_pipeline(chat_id)[:2]
+
 MONGO_HOST="mongodb://127.0.0.1:27017/"
 MONGO_INITDB_ROOT_USERNAME="root"
 MONGO_INITDB_ROOT_PASSWORD="example"
@@ -120,10 +137,91 @@ print(f"Found {len(top_channels)} channels")
 count_messages = sum(chat["top_message"]["id"] for chat in top_channels if "top_message" in chat)
 print(f"Total messages: {count_messages}")
 
+print("Connecting to postgres")
+import psycopg2
+POSTGRES_HOST="127.0.0.1"
+POSTGRES_PORT="5432"
+POSTGRES_USER="user"
+POSTGRES_PASSWORD="password"
+POSTGRES_DB="telegram"
+
+pgconn = psycopg2.connect(
+    host=POSTGRES_HOST,
+    port=POSTGRES_PORT,
+    user=POSTGRES_USER,
+    password=POSTGRES_PASSWORD,
+    database=POSTGRES_DB,
+)
+
 print("Loading model")
 model = SentenceTransformer('paraphrase-multilingual-mpnet-base-v2')
 
 print("Setting handlers and launching tracker")
+
+def emoji_to_int(emoji: str) -> int:
+    return int.from_bytes(emoji.encode("utf-32"), "little")
+
+def int_to_emoji(i: int) -> str:
+    return i.to_bytes(8, "little").decode("utf-32")
+
+class EmojiMap:
+    def __init__(self, emoji_set: Set[str|int] = None, *, path: str = "emoji_map.txt", convert: bool = True):
+        self.path = path
+        self.convert = convert
+        self.emoji_map = dict()
+        if emoji_set:
+            for emoji in emoji_set:
+                self._add_emoji(emoji)
+        self._reload_map()
+    
+    def _reload_map(self):
+        if not os.path.exists(self.path):
+            return
+        with open(self.path, "r") as f:
+            i = 0
+            for line in f:
+                emoji = line.strip()
+                if not emoji:
+                    continue
+                emoji = emoji.split(",")
+                assert len(emoji) == 2
+                is_custom, emoji = int(emoji[0]), int(emoji[1])
+                if not is_custom:
+                    emoji = int_to_emoji(emoji)
+                self.emoji_map[emoji] = i
+                i += 1
+
+    def _save_map(self):
+        with open(self.path, "w") as f:
+            emoji_list = sorted(self.emoji_map.items(), key=lambda x: x[1])
+            for emoji, _ in emoji_list:
+                is_custom = isinstance(emoji, int)
+                if not is_custom:
+                    emoji = emoji_to_int(emoji)
+                f.write(f"{is_custom},{emoji}\n")
+    
+    def _add_emoji(self, emoji: str|int):
+        assert emoji not in self.emoji_map
+        self.emoji_map[emoji] = len(emoji_map)
+        assert isinstance(emoji, (str, int))
+        is_custom = isinstance(emoji, int)
+        if not is_custom:
+            emoji = emoji_to_int(emoji)
+        with open(path, "w+"):
+            f.write(f"{is_custom},{emoji}\n")
+    
+    def __getitem__(self, emoji: str|int) -> int:
+        if isinstance(emoji, str):
+            if emoji not in emoji_map:
+                self._add_emoji(emoji)
+            return emoji_map[emoji]
+        elif isinstance(emoji, int):
+            return emoji
+        else:
+            raise ValueError(f"Unknown emoji type: {emoji} = {type(emoji)}")
+
+
+emoji_map = EmojiMap()
 
 start_time = time.time()
 processed_count = 0
@@ -250,68 +348,63 @@ def find_optimal_batch_size() -> int:
 
 #print(calculate_warmup_gain(1000, do_print=True))
 batch_size = 32#find_optimal_batch_size()
-warmup_parallel_gain, warmup_elapsed_2 = calculate_warmup_gain(batch_size)
+print("Calculating warmup_elapsed_2")
+warmup_parallel_gain, warmup_elapsed_2 = calculate_warmup_gain(batch_size, do_print=False)
 
 
 signal.signal(signal.SIGINT, signal_handler)
 
 
-def recalc_rate():
-    global is_running, processed_count_channel, processed_count, count_messages, count_messages_channel
-    current_time = time.time()
-    last_count = processed_count
-    last_recalc = current_time
-    RECALC_EVERY_SECS = warmup_elapsed_2 // 10
-    ANNOUNCE_IDLE_AFTER = warmup_elapsed_2
-    next_recalc = current_time + RECALC_EVERY_SECS
-    next_announce_idle = current_time + ANNOUNCE_IDLE_AFTER
-    while is_running:
-        current_time = time.time()
-        if current_time >= next_recalc:
-            next_recalc = current_time + RECALC_EVERY_SECS
-            new_count = processed_count - last_count
-            elapsed_intermediate = (current_time - last_recalc)
-            #rate_mps = new_count / elapsed_intermediate
-            if new_count == 0:
-                if current_time >= next_announce_idle:
-                    print(f"{cid}: Rate > {elapsed_intermediate:.2f} spm")
-                    next_announce_idle = current_time + ANNOUNCE_IDLE_AFTER
-                continue
-            #assert new_count > 0
-            rate_spm = elapsed_intermediate / new_count
-            last_count = processed_count
-            last_recalc = current_time
-            left_channel = (count_messages_channel - processed_count_channel) * rate_spm
-            left_total = (count_messages - processed_count) * rate_spm
-            print(f"{cid}: {count_messages} > {count_messages_channel} > {processed_count_channel}; Rate: {rate_spm:.2f} spm; Left: cha={left_channel:.2f}, tot={left_total:.2f}")
-        time.sleep(0.1)
-
-
-t = threading.Thread(target=recalc_rate)
-
+results = None
+inserted_total = 0
+batch_time_total = 0
+spm_avg = 0
 batch_i = 0
 batch = [{"cid": None, "mid": None, "text": None, "embed": None} for _ in range(batch_size)]
-current_msgs = set()
 
-embed_db = db["embeddings_5"]
+
+embed_db = db["embeddings_6"]
 #embed_db.create_index([("cid", 1), ("mid", 1)], unique=True)
 def send_batch():
-    global batch, batch_i, processed_count, processed_count_channel
+    global batch, batch_i, processed_count, processed_count_channel, inserted_total, batch_time_total, spm_avg
+    t_start = time.time()
     i = batch_i
     if i == 0:
         return
     texts = [batch[j]["text"] for j in range(i)]
-    embeds = model.encode(texts)
+    #embeds = model.encode(texts)
     for j in range(i):
-        batch[j]["embed"] = embeds[j].tolist()
-    db["embeddings_5"].insert_many(batch[:i])
+        #batch[j]["embed"] = embeds[j].tolist()
+        reactions = batch[j].get("reactions", {"reactions": []})
+        if type(reactions) is list:
+            batch[j]["reactions"] = reactions
+        elif type(reactions) is dict:
+            batch[j]["reactions"] = [[r["emoji"], r["count"]] for r in reactions.get("reactions", [])]
+        else:
+            batch[j]["reactions"] = []
+        batch[j]["reactions"] = [[emoji_map[r[0]], int(isinstance(r[0], int)) r[1]] for r in batch[j]["reactions"]]
+    cur = pgconn.cursor()
+    cur.execute("BEGIN")
+    for j in range(i):
+        cur.execute("""
+                    INSERT INTO messages_test (chat_id, message_id, text, text_embedding, date, views, forwards, reactions) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (chat_id, message_id) DO UPDATE SET text = EXCLUDED.text, text_embedding = EXCLUDED.text_embedding, date = EXCLUDED.date, views = EXCLUDED.views, forwards = EXCLUDED.forwards, reactions = EXCLUDED.reactions
+                    """,
+                    (batch[j]["cid"], batch[j]["mid"], batch[j]["text"], batch[j]["embed"], batch[j]["date"], batch[j]["views"], batch[j]["forwards"], batch[j]["reaction_emojis"], batch[j]["reaction_counts"]))
+    cur.execute("COMMIT")
+    cur.close()
     processed_count += i
     processed_count_channel += i
     batch_i = 0
+    batch_time_total += time.time() - t_start
+    inserted_total += i
+    spm_avg = batch_time_total / inserted_total
+    left_channel = (count_messages_channel - processed_count_channel) * spm_avg
+    left_total = (count_messages - processed_count) * spm_avg
+    print(f"{cid}: {count_messages} > {count_messages_channel} > {processed_count_channel}; Rate: {spm_avg:.2f} spm; Left: cha={pretty_time(left_channel)}, tot={pretty_time(left_total)}")
 
 
 print("Starting to embed")
-t.start()
 for chat in top_channels:
     if break_signal:
         break
@@ -322,20 +415,14 @@ for chat in top_channels:
     count_messages_channel = top_message_id
     channel_name = chat["chat"]["title"]
     print(f"{cid}: Working on {channel_name}")
-    results = db["messages"].aggregate(get_pipeline(cid))
+    results = db["messages"].aggregate(get_pipeline_fast(cid))
     print(f"{cid}: Going over messages")
     processed_count_channel = 0
     batch_i = 0
-    current_msgs.clear()
     for result in results:
         if break_signal:
             break
-        if result["mid"] in current_msgs:
-            pass#continue
-        current_msgs.add(result["mid"])
-        batch[batch_i]["cid"] = result["cid"]
-        batch[batch_i]["mid"] = result["mid"]
-        batch[batch_i]["text"] = result["text"]
+        batch[batch_i] |= result
         batch_i += 1
         if batch_i == batch_size:
             send_batch()
@@ -349,7 +436,6 @@ is_running = False
 print("ALL DONE")
 
 print("Joining thread")
-t.join()
 
 # FIXME:
 # this is an intermediate solution
