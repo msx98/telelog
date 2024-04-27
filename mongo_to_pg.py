@@ -64,7 +64,7 @@ pgconn = psycopg2.connect(
     password=POSTGRES_PASSWORD,
     database=POSTGRES_DB,
 )
-message_table = "messages_test"
+message_table = "messages"
 
 print("Finding channels")
 cursor = mongodb["dialogs"].find({})
@@ -135,17 +135,18 @@ def send_batch():
         else:
             batch[j]["reactions"] = []
         batch[j]["reactions"] = [[EmojiMap.to_int(r[0]), r[1]] for r in batch[j]["reactions"]]
-        batch[j]["reactions_vote_count"] = sum(r[1] for r in batch[j]["reactions"])
         if "reply_to_message_id" in batch[j]:
             batch[j]["reply_to_message_id"] = batch[j]["reply_to_message_id"]
     cur = pgconn.cursor()
     cur.execute("BEGIN")
     for j in range(i):
+        poll_vote_count = sum(p["voter_count"] for p in batch[j]["poll_options"]) if batch[j]["is_poll"] else None
+        batch[j]["reactions_vote_count"] = sum(r[1] for r in batch[j]["reactions"])
         cur.execute(f"""
                     INSERT INTO {message_table} (chat_id, message_id, text, date, views, forwards, reactions_vote_count, poll_vote_count, forward_from_chat_id, forward_from_message_id, reply_to_message_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (chat_id, message_id) DO UPDATE SET text = EXCLUDED.text, date = EXCLUDED.date, views = EXCLUDED.views, forwards = EXCLUDED.forwards, reactions_vote_count = EXCLUDED.reactions_vote_count, poll_vote_count = EXCLUDED.poll_vote_count
                     """,
-                    (batch[j]["cid"], batch[j]["mid"], batch[j]["text"], batch[j]["date"], batch[j]["views"], batch[j]["forwards"], batch[j]["reactions_vote_count"], batch[j]["poll_vote_count"], batch[j]["forward_from_chat_id"], batch[j]["forward_from_message_id"], batch[j]["reply_to_message_id"]))
+                    (batch[j]["cid"], batch[j]["mid"], batch[j]["text"], batch[j]["date"], batch[j]["views"], batch[j]["forwards"], batch[j]["reactions_vote_count"], poll_vote_count, batch[j]["forward_from_chat_id"], batch[j]["forward_from_message_id"], batch[j]["reply_to_message_id"]))
         for r in batch[j]["reactions"]:
             r_norm = r[1] / batch[j]["reactions_vote_count"] if batch[j]["reactions_vote_count"] else 0
             cur.execute(f"""
@@ -155,7 +156,7 @@ def send_batch():
                         (batch[j]["cid"], batch[j]["mid"], r[0], r_norm, r[1]))
         if batch[j]["is_poll"]:
             for l,p in enumerate(batch[j]["poll_options"]):
-                p_norm = p["voter_count"] / batch[j]["poll_vote_count"] if batch[j]["poll_vote_count"] else 0
+                p_norm = (p["voter_count"] / poll_vote_count) if poll_vote_count else 0
                 cur.execute(f"""
                             INSERT INTO polls (chat_id, message_id, poll_option_id, poll_option_text, poll_option_votes_norm, poll_option_votes_abs) VALUES (%s, %s, %s, %s, %s, %s)
                             ON CONFLICT (chat_id, message_id, poll_option_id) DO UPDATE SET poll_option_votes_norm = EXCLUDED.poll_option_votes_norm, poll_option_votes_abs = EXCLUDED.poll_option_votes_abs
@@ -169,13 +170,17 @@ def send_batch():
     batch_time_total += time.time() - t_start
     inserted_total += i
     spm_avg = batch_time_total / inserted_total
+    mps_avg = inserted_total / batch_time_total
     left_channel = (count_messages_channel - processed_count_channel) * spm_avg
     left_total = (count_messages - processed_count) * spm_avg
-    print(f"{cid}: {count_messages} > {count_messages_channel} > {processed_count_channel}; Rate: {spm_avg:.2f} spm; Left: cha={pretty_time(left_channel)}, tot={pretty_time(left_total)}")
+    print(f"{cid}: {count_messages} > {count_messages_channel} > {processed_count_channel}; Rate: {mps_avg:.2f} mps; Left: cha={pretty_time(left_channel)}, tot={pretty_time(left_total)}")
 
 
 print(f"Deleting {message_table} from postgres if neccessary")
 cur = pgconn.cursor()
+cur.execute(f"DROP INDEX IF EXISTS idx_chat")
+cur.execute(f"DROP INDEX IF EXISTS idx_date")
+cur.execute(f"DROP INDEX IF EXISTS idx_reaction")
 cur.execute(f"DROP TABLE IF EXISTS polls")
 cur.execute(f"DROP TABLE IF EXISTS reactions")
 cur.execute(f"DROP TABLE IF EXISTS {message_table}")
@@ -248,7 +253,6 @@ for result in results:
     batch[batch_i]["forward_from_chat_id"] = result.get("forward_from_chat", {}).get("id", None)
     batch[batch_i]["forward_from_message_id"] = result.get("forward_from_message_id", None)
     batch[batch_i]["reply_to_message_id"] = result.get("reply_to_message_id", None)
-    batch[batch_i]["poll_vote_count"] = result.get("poll", {}).get("total_voter_count", None)
     batch[batch_i]["poll_options"] = result.get("poll", {}).get("options", [])
     batch[batch_i]["is_poll"] = result.get("poll", None) is not None 
     batch_i += 1
