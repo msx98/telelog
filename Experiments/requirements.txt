@@ -1,0 +1,15 @@
+spacy
+beautifulsoup4
+requests
+pandas
+sklearn
+pyarrow
+sentence_transformers
+chromadb
+matplotlib
+accelerate
+transformers==4.36.0
+trl
+datasets
+bitsandbytes
+peft

@@ -21,6 +21,25 @@ services:
       sqlnet:
         ipv4_address: 172.69.128.1
 
+  postgres:
+    image: postgres:16.2
+    restart: always
+    environment:
+      POSTGRES_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      POSTGRES_DB: ${MYSQL_DATABASE}
+      POSTGRES_USER: ${MYSQL_USER}
+      POSTGRES_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      # <Port exposed> : <MySQL Port running inside container>
+      #- "127.0.0.1:3306:3306"
+      - "5432:5432"
+      #- "172.69.128.2:3307:3306"
+    volumes:
+      - ./MessageStore/pgdata:/var/lib/postgresql/data
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.4
+
   mongo:
     image: mongo:7.0.8
     restart: always

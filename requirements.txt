@@ -4,9 +4,11 @@ mysql-connector-python
 python-dotenv
 pymongo
 deep-translator
+psycopg2
 
 # for jupyter:
 nbformat
 ipykernel
 gradio
 typing-extensions
+psycopg2-binary
