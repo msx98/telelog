@@ -25,7 +25,7 @@ LOG_PATH="$LOG_DIR/out"
 PID_PATH="$LOG_DIR/pid"
 
 if [ $IS_PYTHON -eq 1 ]; then
-    PROGRAM_RELATIVE_PATH="python3 $PROGRAM_RELATIVE_PATH"
+    PROGRAM_RELATIVE_PATH="python3 -u $PROGRAM_RELATIVE_PATH"
 fi
 
 if [ $DRY_RUN -eq 0 ]; then
@@ -44,6 +44,7 @@ if [ $DRY_RUN -eq 0 ]; then
         echo "Error: Could not create pid file $PID_PATH"
         exit 1
     fi
+    echo "Starting '$PROGRAM_RELATIVE_PATH' and logging into $LOG_PATH"
     nohup $PROGRAM_RELATIVE_PATH > $LOG_PATH 2>&1 &
     echo $! > $PID_PATH
 fi
