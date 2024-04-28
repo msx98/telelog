@@ -6,4 +6,6 @@ ADD ./init.sh /root/init.sh
 
 WORKDIR /app
 
+RUN apt update && apt install -y nano vim procps net-tools iputils-ping wget curl
+
 ENTRYPOINT ["bash", "/root/init.sh"]
