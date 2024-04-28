@@ -14,6 +14,7 @@ from pyrogram.types import Message, User, Chat, Dialog
 from pyrogram.errors import RPCError, FloodWait, Flood
 from mysql_backend import MySQLBackend
 from mongo_backend import MongoBackend
+from pg_backend import PostgresBackend
 import datetime
 import time
 from consts import *

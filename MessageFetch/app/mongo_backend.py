@@ -10,6 +10,7 @@ from enum import Enum
 import datetime
 from base_backend import BaseBackend, clean_dict, StoredDialog
 import json
+from consts import *
 
 
 class MongoBackend(BaseBackend):
@@ -18,14 +19,18 @@ class MongoBackend(BaseBackend):
     def __init__(
         self,
         *,
-        MONGO_HOST,
-        MONGO_INITDB_ROOT_USERNAME,
-        MONGO_INITDB_ROOT_PASSWORD,
-        MONGO_DATABASE,
+        host = None,
+        user = None,
+        password = None,
+        database = None,
         **kwargs,
     ):
-        self._conn = MongoClient(MONGO_HOST, username=MONGO_INITDB_ROOT_USERNAME, password=MONGO_INITDB_ROOT_PASSWORD)
-        self.db = self._conn[MONGO_DATABASE]
+        self._conn = MongoClient(
+            host = host or MONGO_HOST,
+            username = user or MONGO_INITDB_ROOT_USERNAME,
+            password = password or MONGO_INITDB_ROOT_PASSWORD,
+        )
+        self.db = self._conn[database or MONGO_DATABASE]
         super().__init__(**kwargs)
     
     @property
@@ -36,8 +41,8 @@ class MongoBackend(BaseBackend):
         if message.outgoing:
             return
         if message.chat:
-            assert self.selected_channel is not None
-            assert message.chat.id == self.selected_channel.chat.id
+            assert self._selected_channel is not None
+            assert message.chat.id == self._selected_channel.chat.id
         message_norm = clean_dict(message)
         if not message_norm:
             return
@@ -52,8 +57,12 @@ class MongoBackend(BaseBackend):
             upsert=True,
         )
     
+    def delete_messages(self, channel_id: int, id_min: int, id_max: int):
+        assert self._selected_channel is None
+        r_count = self.db["messages"].delete_many({"chat.id": channel_id, "id": {"$gt": id_min, "$lte": id_max}})
+    
     def delete_channel(self, channel_id: int):
-        assert self.selected_channel is None
+        assert self._selected_channel is None
         self.db["messages"].delete_many({"chat.id": channel_id})
         self.db["dialogs"].delete_many({"_id": channel_id})
     
@@ -82,20 +91,6 @@ class MongoBackend(BaseBackend):
             d[row["_id"]] = StoredDialog(title=row["chat"]["title"], max_id=row["top_message"]["id"] if ("top_message" in row) else -1)
         self._stored_dialogs = d
         return d
-    
-    def select_channel(self, dialog: pyrogram.types.Dialog):
-        assert self.selected_channel is None
-        self.selected_channel = dialog
-        assert self._stored_dialogs
-        max_id = self._stored_dialogs[dialog.chat.id].max_id if dialog.chat.id in self._stored_dialogs else -1
-        channel_id = dialog.chat.id
-        with open(f"{self.session_dir}/.last_write.json", "w") as f:
-            f.write(json.dumps({
-                "channel_id": channel_id,
-                "channel_name": dialog.chat.title,
-                "id_end": max_id,
-                "id_start": dialog.top_message.id if dialog.top_message else max_id
-            }))
 
     def count_messages(self) -> int:
         return self.db["messages"].count_documents({})
@@ -104,21 +99,7 @@ class MongoBackend(BaseBackend):
         return self.db["dialogs"].count_documents({})
     
     def unselect_channel(self):
-        assert self.selected_channel is not None
-        self.add_channel(self.selected_channel)
-        self.selected_channel = None
-        os.remove(f"{self.session_dir}/.last_write.json")
-    
-    def delete_last_write(self):
-        if not os.path.exists(f"{self.session_dir}/.last_write.json"):
-            return None
-        with open(f"{self.session_dir}/.last_write.json", "r") as f:
-            data = json.loads(f.read())
-        channel_id = data["channel_id"]
-        channel_name = data["channel_name"]
-        id_end = data["id_end"]
-        id_start = data["id_start"]
-        assert id_end <= id_start # we receive messages in reverse
-        r = self.db["messages"].delete_many({"chat.id": channel_id, "id": {"$gt": id_end, "$lte": id_start}})
-        delete_count = r.deleted_count
-        return (channel_id, channel_name, delete_count)
+        assert self._selected_channel is not None
+        self.add_channel(self._selected_channel)
+        self._selected_channel = None
+        os.remove(f"{self._session_dir}/.last_write.json")
