@@ -119,6 +119,7 @@ top_channels = [
 
 additional_channels = {
     -1001425940518, # חדשות בזמן בטלגרם - קבוצת החדשות
+    -1002137332812,
 }
 
 
@@ -250,7 +251,9 @@ async def main():
         channel_counts: Dict[int, int] = dict()
         pending: List[int] = []
         finished: List[int] = []
+        print("Fetching dialogs")
         current_dialogs: Dict[int, Dialog] = await get_dialogs()
+        print(f"Got {len(current_dialogs)} dialogs")
         await status_msg.update(d_dialogs=current_dialogs, d_counts=channel_counts, pending=pending, finished=finished, current=None)
         
         result = db.delete_last_write()
@@ -260,6 +263,7 @@ async def main():
             await status_msg.announce_recover()
 
         stored_dialogs_fast: Dict[int, StoredDialog] = db.get_stored_dialogs_fast()
+        print(f"Got {len(stored_dialogs_fast)} stored dialogs")
         stored_dialogs: Dict[int, StoredDialog] = stored_dialogs_fast#db.get_stored_dialogs()
         #missing_dialogs: Dict[int, StoredDialog] = {k: stored_dialogs[k] for k in stored_dialogs.keys() if k not in stored_dialogs_fast.keys()}
         kicked_channels = [v.title for k,v in stored_dialogs.items() if k not in current_dialogs.keys()]
@@ -275,6 +279,7 @@ async def main():
         finished += [x for x in all_channels if x not in pending]
         channel_counts |= {channel_id: 0 for channel_id in pending}
         await status_msg.update()
+        print(f"Pending: {len(pending)}")
         while pending:
             channel_id = pending.pop(0)
             assert channel_id is not None

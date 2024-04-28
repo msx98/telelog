@@ -1,4 +1,4 @@
-from types import Dict
+from typing import Dict
 from enum import Enum
 import queue
 import threading
