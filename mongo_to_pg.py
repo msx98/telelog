@@ -70,6 +70,7 @@ print("Finding channels")
 cursor = mongodb["dialogs"].find({})
 top_channels = list(cursor)
 top_channels.sort(key=lambda x: (x["top_message"]["id"]), reverse=True)
+top_message_id = {channel["chat"]["id"]: channel["top_message"]["id"] for channel in top_channels}
 count_messages = sum(chat["top_message"]["id"] for chat in top_channels if "top_message" in chat)
 print(f"Found {len(top_channels)} channels with <= {count_messages}")
 
@@ -101,6 +102,60 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGINT, signal_handler)
 
 
+def normalize_reactions(mongo_message: Dict):
+    reactions = mongo_message.get("reactions", {"reactions": []})
+    if type(reactions) is list:
+        mongo_message["reactions"] = reactions
+    elif type(reactions) is dict:
+        reactions = reactions.get("reactions", [])
+        mongo_message["reactions"] = []
+        for r in reactions:
+            if "emoji" in r:
+                mongo_message["reactions"].append([r["emoji"], r["count"]])
+            elif "custom_emoji_id" in r:
+                mongo_message["reactions"].append([r["custom_emoji_id"], r["count"]])
+            else:
+                raise Exception(f"Unknown reaction type: {r} in {reactions}")
+    else:
+        mongo_message["reactions"] = []
+    mongo_message["reactions"] = [[EmojiMap.to_int(r[0]), r[1]] for r in mongo_message["reactions"]]
+
+
+def normalize_media(mongo_message: Dict):
+    # {'document', 'audio', 'voice', 'video', 'sticker', 'animation', 'new_chat_photo', 'video_note', 'photo'}
+    file_id: str = None
+    media_type: str = None
+    if "document" in mongo_message:
+        file_id = mongo_message["document"]["file_id"]
+        media_type = "document"
+    elif "audio" in mongo_message:
+        file_id = mongo_message["audio"]["file_id"]
+        media_type = "audio"
+    elif "voice" in mongo_message:
+        file_id = mongo_message["voice"]["file_id"]
+        media_type = "voice"
+    elif "video" in mongo_message:
+        file_id = mongo_message["video"]["file_id"]
+        media_type = "video"
+    elif "sticker" in mongo_message:
+        file_id = mongo_message["sticker"]["file_id"]
+        media_type = "sticker"
+    elif "animation" in mongo_message:
+        file_id = mongo_message["animation"]["file_id"]
+        media_type = "animation"
+    elif "video_note" in mongo_message:
+        file_id = mongo_message["video_note"]["file_id"]
+        media_type = "video_note"
+    elif "photo" in mongo_message:
+        file_id = mongo_message["photo"]["file_id"]
+        media_type = "photo"
+    elif "new_chat_photo" in mongo_message:
+        file_id = mongo_message["new_chat_photo"]["file_id"]
+        media_type = "new_chat_photo"
+    mongo_message["media_type"] = media_type
+    mongo_message["file_id"] = file_id
+
+
 results = None
 inserted_total = 0
 batch_time_total = 0
@@ -109,59 +164,51 @@ batch_i = 0
 batch_size = 1024
 batch = [dict() for _ in range(batch_size)]
 
+def add_query_reactions(cur, msg_dict):
+    for r in msg_dict["reactions"]:
+        r_norm = r[1] / msg_dict["reactions_vote_count"] if msg_dict["reactions_vote_count"] else 0
+        cur.execute(f"""
+                    INSERT INTO reactions (chat_id, message_id, reaction_id, reaction_votes_norm, reaction_votes_abs) VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (chat_id, message_id, reaction_id) DO UPDATE SET reaction_votes_norm = EXCLUDED.reaction_votes_norm, reaction_votes_abs = EXCLUDED.reaction_votes_abs
+                    """,
+                    (msg_dict["cid"], msg_dict["mid"], r[0], r_norm, r[1]))
+
+
+def add_query_poll(cur, msg_dict):
+    if msg_dict.get("poll", None) is None:
+        return
+    for l,p in enumerate(msg_dict["poll_options"]):
+        p_norm = (p["voter_count"] / msg_dict["poll_vote_count"]) if msg_dict["poll_vote_count"] else 0
+        cur.execute(f"""
+                    INSERT INTO polls (chat_id, message_id, poll_option_id, poll_option_text, poll_option_votes_norm, poll_option_votes_abs) VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (chat_id, message_id, poll_option_id) DO UPDATE SET poll_option_votes_norm = EXCLUDED.poll_option_votes_norm, poll_option_votes_abs = EXCLUDED.poll_option_votes_abs
+                    """,
+                    (msg_dict["cid"], msg_dict["mid"], l, p["text"], p_norm, p["voter_count"]))
+
+def add_query_message(cur, msg_dict):
+    cur.execute(f"""
+                INSERT INTO {message_table} (chat_id, message_id, text, date, views, forwards, reactions_vote_count, poll_vote_count, forward_from_chat_id, forward_from_message_id, reply_to_message_id, media_type, file_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (chat_id, message_id) DO UPDATE SET text = EXCLUDED.text, date = EXCLUDED.date, views = EXCLUDED.views, forwards = EXCLUDED.forwards, reactions_vote_count = EXCLUDED.reactions_vote_count, poll_vote_count = EXCLUDED.poll_vote_count, file_id = EXCLUDED.file_id, media_type = EXCLUDED.media_type
+                """,
+                (msg_dict["cid"], msg_dict["mid"], msg_dict["text"], msg_dict["date"], msg_dict["views"], msg_dict["forwards"], msg_dict["reactions_vote_count"], msg_dict["poll_vote_count"], msg_dict["forward_from_chat_id"], msg_dict["forward_from_message_id"], msg_dict["reply_to_message_id"], msg_dict["media_type"], msg_dict["file_id"]))
+
+
+def add_query(cur, msg_dict):
+    add_query_message(cur, msg_dict)
+    add_query_reactions(cur, msg_dict)
+    add_query_poll(cur, msg_dict)
+
+
 def send_batch():
     global batch, batch_i, processed_count, processed_count_channel, inserted_total, batch_time_total, spm_avg
     t_start = time.time()
     i = batch_i
     if i == 0:
         return
-    texts = [batch[j]["text"] for j in range(i)]
-    #embeds = model.encode(texts)
-    for j in range(i):
-        #batch[j]["embed"] = embeds[j].tolist()
-        reactions = batch[j].get("reactions", {"reactions": []})
-        if type(reactions) is list:
-            batch[j]["reactions"] = reactions
-        elif type(reactions) is dict:
-            reactions = reactions.get("reactions", [])
-            batch[j]["reactions"] = []
-            for r in reactions:
-                if "emoji" in r:
-                    batch[j]["reactions"].append([r["emoji"], r["count"]])
-                elif "custom_emoji_id" in r:
-                    batch[j]["reactions"].append([r["custom_emoji_id"], r["count"]])
-                else:
-                    raise Exception(f"Unknown reaction type: {r} in {reactions}")
-        else:
-            batch[j]["reactions"] = []
-        batch[j]["reactions"] = [[EmojiMap.to_int(r[0]), r[1]] for r in batch[j]["reactions"]]
-        if "reply_to_message_id" in batch[j]:
-            batch[j]["reply_to_message_id"] = batch[j]["reply_to_message_id"]
     cur = pgconn.cursor()
     cur.execute("BEGIN")
     for j in range(i):
-        poll_vote_count = sum(p["voter_count"] for p in batch[j]["poll_options"]) if batch[j]["is_poll"] else None
-        batch[j]["reactions_vote_count"] = sum(r[1] for r in batch[j]["reactions"])
-        cur.execute(f"""
-                    INSERT INTO {message_table} (chat_id, message_id, text, date, views, forwards, reactions_vote_count, poll_vote_count, forward_from_chat_id, forward_from_message_id, reply_to_message_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (chat_id, message_id) DO UPDATE SET text = EXCLUDED.text, date = EXCLUDED.date, views = EXCLUDED.views, forwards = EXCLUDED.forwards, reactions_vote_count = EXCLUDED.reactions_vote_count, poll_vote_count = EXCLUDED.poll_vote_count
-                    """,
-                    (batch[j]["cid"], batch[j]["mid"], batch[j]["text"], batch[j]["date"], batch[j]["views"], batch[j]["forwards"], batch[j]["reactions_vote_count"], poll_vote_count, batch[j]["forward_from_chat_id"], batch[j]["forward_from_message_id"], batch[j]["reply_to_message_id"]))
-        for r in batch[j]["reactions"]:
-            r_norm = r[1] / batch[j]["reactions_vote_count"] if batch[j]["reactions_vote_count"] else 0
-            cur.execute(f"""
-                        INSERT INTO reactions (chat_id, message_id, reaction_id, reaction_votes_norm, reaction_votes_abs) VALUES (%s, %s, %s, %s, %s)
-                        ON CONFLICT (chat_id, message_id, reaction_id) DO UPDATE SET reaction_votes_norm = EXCLUDED.reaction_votes_norm, reaction_votes_abs = EXCLUDED.reaction_votes_abs
-                        """,
-                        (batch[j]["cid"], batch[j]["mid"], r[0], r_norm, r[1]))
-        if batch[j]["is_poll"]:
-            for l,p in enumerate(batch[j]["poll_options"]):
-                p_norm = (p["voter_count"] / poll_vote_count) if poll_vote_count else 0
-                cur.execute(f"""
-                            INSERT INTO polls (chat_id, message_id, poll_option_id, poll_option_text, poll_option_votes_norm, poll_option_votes_abs) VALUES (%s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (chat_id, message_id, poll_option_id) DO UPDATE SET poll_option_votes_norm = EXCLUDED.poll_option_votes_norm, poll_option_votes_abs = EXCLUDED.poll_option_votes_abs
-                            """,
-                            (batch[j]["cid"], batch[j]["mid"], l, p["text"], p_norm, p["voter_count"]))
+        add_query(cur, batch[j])
     cur.execute("COMMIT")
     cur.close()
     processed_count += i
@@ -178,19 +225,59 @@ def send_batch():
 
 print(f"Deleting {message_table} from postgres if neccessary")
 cur = pgconn.cursor()
-cur.execute(f"DROP INDEX IF EXISTS idx_chat")
-cur.execute(f"DROP INDEX IF EXISTS idx_date")
-cur.execute(f"DROP INDEX IF EXISTS idx_reaction")
-cur.execute(f"DROP TABLE IF EXISTS polls")
-cur.execute(f"DROP TABLE IF EXISTS reactions")
-cur.execute(f"DROP TABLE IF EXISTS {message_table}")
-cur.execute(f"""
-            CREATE TABLE {message_table} (
+if False:
+    cur.execute("SELECT EXISTS(SELECT * FROM pg_extension WHERE extname = 'vector');")
+    if not cur.fetchone()[0]:
+        cur.execute("CREATE EXTENSION vector;")
+if False:
+    cur.execute(f"DROP INDEX IF EXISTS idx_chat")
+    cur.execute(f"DROP INDEX IF EXISTS idx_date")
+    cur.execute(f"DROP INDEX IF EXISTS idx_reaction")
+    cur.execute(f"DROP TABLE IF EXISTS polls")
+    cur.execute(f"DROP TABLE IF EXISTS reactions")
+    cur.execute(f"DROP TABLE IF EXISTS {message_table}")
+    cur.execute(f"DROP TABLE IF EXISTS chats")
+    cur.execute(f"DROP TYPE IF EXISTS chat_type")
+    cur.execute(f"CREATE TYPE chat_type AS ENUM ('private', 'bot', 'group', 'supergroup', 'channel')")
+    cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS chats (
+                chat_id BIGINT NOT NULL,
+                top_message_id BIGINT,
+                title TEXT,
+                first_name TEXT,
+                last_name TEXT,
+                username TEXT,
+                invite_link TEXT,
+                type chat_type,
+                members_count INTEGER CHECK (members_count >= 0),
+                is_verified BOOLEAN,
+                is_restricted BOOLEAN,
+                is_scam BOOLEAN,
+                is_fake BOOLEAN,
+                is_support BOOLEAN,
+                linked_chat_id BIGINT,
+                PRIMARY KEY (chat_id)
+            );
+            """)
+    cur.execute(f"""
+                CREATE TYPE IF NOT EXISTS media_type AS ENUM (
+                    'document', 
+                    'audio', 
+                    'voice', 
+                    'video', 
+                    'sticker', 
+                    'animation', 
+                    'new_chat_photo', 
+                    'video_note', 
+                    'photo'
+                );""")
+    cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS {message_table} (
                 chat_id BIGINT NOT NULL,
                 message_id BIGINT NOT NULL,
                 sender_id BIGINT,
                 text TEXT,
-                text_embedding REAL[],
+                embedding vector(768),
                 date TIMESTAMP,
                 views INTEGER CHECK (views >= 0),
                 forwards INTEGER CHECK (forwards >= 0),
@@ -199,19 +286,21 @@ cur.execute(f"""
                 reply_to_message_id BIGINT,
                 poll_vote_count INTEGER CHECK (poll_vote_count >= 0),
                 reactions_vote_count INTEGER CHECK (reactions_vote_count >= 0),
+                media_type media_type,
+                file_id TEXT,
                 PRIMARY KEY (chat_id, message_id)
             );-- PARTITION BY RANGE (chat_id)
             """)
-cur.execute(f"CREATE INDEX idx_chat ON {message_table} (chat_id)")
-cur.execute(f"""
-    CREATE INDEX idx_date ON {message_table} (
+    cur.execute(f"CREATE INDEX IF NOT EXISTS idx_chat ON {message_table} (chat_id)")
+    cur.execute(f"""
+    CREATE INDEX IF NOT EXISTS idx_date ON {message_table} (
         (date_part('year', date)),
         (date_part('month', date)),
         (date_part('day', date))
     )
     """)
-cur.execute(f"""
-            CREATE TABLE reactions (
+    cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS reactions (
                 chat_id BIGINT NOT NULL,
                 message_id BIGINT NOT NULL,
                 reaction_id INTEGER,
@@ -221,9 +310,9 @@ cur.execute(f"""
             );-- PARTITION BY RANGE (chat_id);
             ALTER TABLE reactions ADD CONSTRAINT fk_reactions_message FOREIGN KEY (chat_id, message_id) REFERENCES {message_table} (chat_id, message_id);
             """)
-cur.execute(f"CREATE INDEX idx_reaction ON reactions (reaction_id)")
-cur.execute(f"""
-            CREATE TABLE polls (
+    cur.execute(f"CREATE INDEX IF NOT EXISTS idx_reaction ON reactions (reaction_id)")
+    cur.execute(f"""
+            CREATE TABLE IF NOT EXISTS polls (
                 chat_id BIGINT NOT NULL,
                 message_id BIGINT NOT NULL,
                 poll_option_id INTEGER,
@@ -240,26 +329,68 @@ cur.close()
 results = mongodb["messages"].find({})
 cid = None
 print("Going over messages")
+first_iteration = True
 for result in results:
     if break_signal:
         break
-    batch[batch_i]["cid"] = result["chat"]["id"]
-    batch[batch_i]["mid"] = result["id"]
+    cid, mid = result["chat"]["id"], result["id"]
+    if mid > top_message_id[cid]:
+        continue
+    batch[batch_i]["cid"] = cid
+    batch[batch_i]["mid"] = mid
     batch[batch_i]["text"] = result.get("text", result.get("caption", result.get("poll", {}).get("question", None)))
-    batch[batch_i]["reactions"] = result.get("reactions", [])
+    batch[batch_i]["reactions"] = result.get("reactions", dict())
     batch[batch_i]["views"] = result.get("views", 0)
     batch[batch_i]["forwards"] = result.get("forwards", 0)
     batch[batch_i]["date"] = result["date"]
     batch[batch_i]["forward_from_chat_id"] = result.get("forward_from_chat", {}).get("id", None)
     batch[batch_i]["forward_from_message_id"] = result.get("forward_from_message_id", None)
     batch[batch_i]["reply_to_message_id"] = result.get("reply_to_message_id", None)
-    batch[batch_i]["poll_options"] = result.get("poll", {}).get("options", [])
-    batch[batch_i]["is_poll"] = result.get("poll", None) is not None 
+    batch[batch_i]["poll_options"] = result.get("poll", {}).get("options", None)
+    batch[batch_i]["poll_vote_count"] = sum(p["voter_count"] for p in batch[batch_i]["poll_options"]) if batch[batch_i]["poll_options"] is not None else None
+    normalize_reactions(batch[batch_i])
+    batch[batch_i]["reactions_vote_count"] = sum(r[1] for r in batch[batch_i]["reactions"])
+    normalize_media(batch[batch_i])
     batch_i += 1
     if batch_i == batch_size:
         send_batch()
 if batch_i:
     send_batch()
+
+
+print("SEE TOP MESSAGES:")
+print(top_message_id)
+
+print("WRITING DIALOGS")
+
+for chat_id in top_message_id:
+    dialog = mongodb["dialogs"].find_one({"chat.id": chat_id})["chat"]
+    channel = {
+        "title": dialog.get("title", None),
+        "top_message_id": top_message_id[chat_id],
+        "first_name": None,
+        "last_name": None,
+        "username": dialog.get("username", None),
+        "invite_link": None, # FIXME - need to fetch
+        "type": dialog.get("type", None).lower() if dialog.get("type", None) is not None else None,
+        "members_count": dialog.get("members_count", None),
+        "is_verified": dialog.get("is_verified", None),
+        "is_restricted": dialog.get("is_restricted", None),
+        "is_scam": dialog.get("is_scam", None),
+        "is_fake": dialog.get("is_fake", None),
+        "is_support": dialog.get("is_support", None),
+        "linked_chat_id": None, # FIXME - need to fetch
+    }
+    cur = pgconn.cursor()
+    cur.execute(f"""
+                INSERT INTO chats (chat_id, top_message_id, title, first_name, last_name, username, invite_link, type, members_count, is_verified, is_restricted, is_scam, is_fake, is_support, linked_chat_id) VALUES (%
+                ON CONFLICT (chat_id) DO UPDATE SET top_message_id = EXCLUDED.top_message_id, title = EXCLUDED.title, first_name = EXCLUDED.first_name, last_name = EXCLUDED.last_name, username = EXCLUDED.username, invite_link = EXCLUDED.invite_link, type = EXCLUDED.type, members_count = EXCLUDED.members_count, is_verified = EXCLUDED.is_verified, is_restricted = EXCLUDED.is_restricted, is_scam = EXCLUDED.is_scam, is_fake = EXCLUDED.is_fake, is_support = EXCLUDED.is_support, linked_chat_id = EXCLUDED.linked_chat_id
+                """,
+                (chat_id, channel["top_message_id"], channel["title"], channel["first_name"], channel["last_name"], channel["username"], channel["invite_link"], channel["type"], channel["members_count"], channel["is_verified"], channel["is_restricted"], channel["is_scam"], channel["is_fake"], channel["is_support"], channel["linked_chat_id"]))
+    pgconn.commit()
+    cur.close()
+
+print("COMMITTED TO EVERYTHING")
 
 break_signal = False
 exit(0)
