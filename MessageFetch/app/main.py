@@ -11,7 +11,7 @@ import signal
 import sys
 
 print("Connecting to DB")
-db = MySQLBackend(**config)
+db = MySQLBackend()
 
 
 print("Connecting to account")

@@ -6,38 +6,12 @@ import os
 import mysql.connector
 from mysql.connector import Error as MySQLError
 from mysql.connector import connection as MySQLConnection
+from base_backend import BaseBackendWithQueue, clean_dict, StoredDialog, chat_type_dict, media_type_dict
 import threading
 import queue
 import time
 import datetime
-
-
-chat_type_dict = {
-    ChatType.CHANNEL: 1,
-    ChatType.GROUP: 2,
-    ChatType.SUPERGROUP: 3,
-    ChatType.PRIVATE: 4,
-    ChatType.BOT: 5,
-}
-
-
-media_type_dict = {
-    MessageMediaType.AUDIO: 1,
-    MessageMediaType.DOCUMENT: 2,
-    MessageMediaType.PHOTO: 3,
-    MessageMediaType.STICKER: 4,
-    MessageMediaType.VIDEO: 5,
-    MessageMediaType.ANIMATION: 6,
-    MessageMediaType.VOICE: 7,
-    MessageMediaType.VIDEO_NOTE: 8,
-    MessageMediaType.CONTACT: 9,
-    MessageMediaType.LOCATION: 10,
-    MessageMediaType.VENUE: 11,
-    MessageMediaType.POLL: 12,
-    MessageMediaType.WEB_PAGE: 13,
-    MessageMediaType.DICE: 14,
-    MessageMediaType.GAME: 15,
-}
+from consts import *
 
 
 def normalize_message(message: Message) -> Optional[Dict[str, Optional[str|int]]]:
@@ -137,37 +111,29 @@ class MessageQueue:
             time.sleep(1)
 
 
-class MySQLBackend:
+class MySQLBackend(BaseBackendWithQueue):
     conn: MySQLConnection = None
 
     def __init__(
         self,
         *,
-        MYSQL_HOST,
-        MYSQL_PORT,
-        MYSQL_USER,
-        MYSQL_PASSWORD,
-        MYSQL_DATABASE,
-        MAX_QUEUE_SIZE = 10,
+        host = None,
+        port = None,
+        user = None,
+        password = None,
+        database = None,
         **kwargs,
     ):
-        self.conn = mysql.connector.connect(host=MYSQL_HOST,
-                                            database=MYSQL_DATABASE,
-                                            user=MYSQL_USER,
-                                            password=MYSQL_PASSWORD,
-                                            port=MYSQL_PORT,)
-        self.lock = threading.Lock()
-        if not self.conn.is_connected():
-            raise Exception("Could not connect")
-        self.message_queue = MessageQueue(self, MAX_QUEUE_SIZE)
-        print(f"Connected to MySQL at {MYSQL_HOST}:{MYSQL_PORT}")
-
-    def add_message(self, message: Message):
-        self.message_queue.add_message(message)
+        self._conn = mysql.connector.connect(host = host or MYSQL_HOST,
+                                            database = database or MYSQL_DATABASE,
+                                            user = user or MYSQL_USER,
+                                            password = password or MYSQL_PASSWORD,
+                                            port = port or MYSQL_PORT,)
+        super().__init__(**kwargs)
 
     def _add_messages(self, messages):
         #print(f"Inserting {len(messages)} messages")
-        cur = self.conn.cursor()
+        cur = self._conn.cursor()
         for message in messages:
             message_norm = normalize_message(message)
             if not message_norm:
@@ -177,48 +143,14 @@ class MySQLBackend:
             message_norm_vals_almost = ",".join("%s" for _ in message_norm_vals)
             update_str = ", ".join([f"{k}=VALUES({k})" for k in message_norm.keys()])
             cur.execute(f"INSERT INTO messages ({message_norm_keys}) VALUES ({message_norm_vals_almost}) ON DUPLICATE KEY UPDATE {update_str}", message_norm_vals)
-        self.conn.commit()
+        self._conn.commit()
         cur.close()
         print(f"Inserted {len(messages)} messages")
     
-    def sample_query(self):
-        cur = self.conn.cursor()
-        cur.execute("SELECT * FROM messages LIMIT 1")
-        print(cur.fetchone())
-        cur.close()
-    
-    def get_historic_chats(self) -> List[int]:
-        cur = self.conn.cursor()
-        cur.execute("""
-            SELECT DISTINCT chat_id FROM messages 
-            UNION 
-            SELECT DISTINCT sender_id AS chat_id FROM messages WHERE sender_type <> 0
-        """)
-        chat_ids = [r[0] for r in cur.fetchall()]
-        cur.close()
-        return chat_ids
-    
-    def refresh_chats(self, chat_info: Dict[int, Chat]):
-        cur = self.conn.cursor()
-        for chat_id, chat in chat_info.items():
-            chat_type = chat_type_dict[chat.type]
-            cur.execute("""
-                        INSERT INTO chats (chat_id, chat_name, chat_type) VALUES (%s, %s, %s)
-                        ON DUPLICATE KEY UPDATE chat_name=%s, chat_type=%s""", (chat_id, chat.title, chat_type, chat.title, chat_type))
-        self.conn.commit()
-        cur.close()
-    
     def count_messages(self) -> Tuple[int, datetime.datetime]:
         with self.lock:
-            cur = self.conn.cursor()
+            cur = self._conn.cursor()
             cur.execute("SELECT COUNT(*), MAX(date) FROM messages")
             n, date = cur.fetchone()
             cur.close()
             return n, date
-
-    def close(self):
-        print("Obtaining lock to close")
-        with self.lock:
-            print("Obtained lock - closing")
-            self.conn.close()
-        print("Closed SQL connection")

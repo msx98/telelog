@@ -80,6 +80,7 @@ class BaseBackend(abc.ABC):
         self._selected_channel: Dialog = None
         self._stored_dialogs: Dict[int, StoredDialog] = None
         self._session_dir = kwargs.get("SESSION_DIR", SESSION_DIR)
+        os.makedirs(self._session_dir, exist_ok=True)
 
     def select_channel(self, dialog: pyrogram.types.Dialog):
         assert self._selected_channel is None

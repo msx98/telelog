@@ -8,60 +8,6 @@ import time
 from typing import List, Dict, Tuple
 from mysql_backend import normalize_message
 import json
-
-cur = None
-conn = None
-def query(q: str, n: int = None):
-    global cur
-    global conn
-    if cur is not None:
-        cur.close()
-    if conn is not None:
-        conn.close()
-    conn = mysql.connector.connect(host=MYSQL_HOST,
-                                database=MYSQL_DATABASE,
-                                user=MYSQL_USER,
-                                password=MYSQL_PASSWORD,
-                                port=MYSQL_PORT,)
-    if not conn.is_connected():
-        raise Exception("Could not connect")
-    cur = conn.cursor()
-    cur.execute(q)
-    i = 0
-    if n is not None:
-        while i < n:
-            try:
-                row = next(cur)
-                yield row
-                i += 1
-            except:
-                break
-    else:
-        for row in cur:
-            yield row
-
-def create_insert_query(d: Dict, table: str):
-    cols = list(d.keys())
-    template = ",".join(["%s" for _ in cols])
-    cols_str = ",".join(cols)
-    ordered_vals = tuple([d[x] for x in cols])
-    return f"INSERT INTO {table} ({cols_str}) VALUES ({template})", ordered_vals
-
-def insert(d: List[Dict], table: str):
-    global cur
-    cur = conn.cursor()
-    for i in d:
-        q, v = create_insert_query(i, table)
-        cur.execute(q, v)
-    conn.commit()
-    cur.close()
-
-def get_cols(table: str):
-    return (tuple([x[0] for x in (query(f"DESCRIBE {table}"))]))
-
-
-#!/usr/bin/env python3
-
 from pyrogram import Client, filters
 from pyrogram.enums import ChatType
 from pyrogram.types import Message, User, Chat, Dialog
@@ -75,12 +21,9 @@ import signal
 import sys
 from typing import Optional
 
-os.makedirs(config["SESSION_DIR"], exist_ok=True)
-
 
 print("Connecting to DB")
-config["MONGO_DATABASE"] = "messages_new"
-db = MongoBackend(**config)
+db = MongoBackend()
 
 
 print("Connecting to account")
@@ -88,17 +31,12 @@ app = Client("listener_fetch", api_id=TELEGRAM_API_ID, api_hash=TELEGRAM_API_HAS
 
 
 print("Defining handlers")
-
-
 def signal_handler(sig, frame):
 	print("Closing DB")
 	db.close()
 	print("Closing account")
 	app.stop()
 	sys.exit(0)
-
-
-print("Adding signal handlers")
 signal.signal(signal.SIGINT, signal_handler)
 
 
@@ -106,24 +44,13 @@ print("Launching app")
 client = app.start()
 
 
-top_channels = [
-    (-1001425940518, "חדשות בזמן בטלגרם", 6969),
-    (-1001221122299, 'דיווחים בזמן אמת', 152960),
-    (-1001143765178, 'אבו עלי אקספרס', 371460),
-    (-1001425850587, 'אבו צאלח הדסק הערבי', 108616),
-    (-1001406113886, 'חדשות מהשטח בטלגרם', 467476),
-    (-1001613161072, 'דניאל עמרם ללא צנזורה', 373393),
-    (-1001221122299, 'דיווחים בזמן אמת', 152960),
-    (-1001474443960, 'מבזקי רעם - מבזקי חדשות בזמן אמת', 116313),
-]
-
 additional_channels = {
     -1001425940518, # חדשות בזמן בטלגרם - קבוצת החדשות
     -1002137332812,
 }
 
 
-def get_channel_counts(
+def get_channel_counts_string(
         d_dialogs: Dict[int, Dialog],
         d_counts: Dict[int, int],
         channels: List[int],
@@ -220,7 +147,7 @@ class StatusMessage:
             s += f"""Kicked from {len(kicked)} channels:\n{sep.join(kicked)}\n\n"""
         if (current is not None) or pending:
             s += "Pending:\n"
-            s += get_channel_counts(d_dialogs, d_counts, ([current] if current is not None else []) + (pending or [])) + "\n\n"
+            s += get_channel_counts_string(d_dialogs, d_counts, ([current] if current is not None else []) + (pending or [])) + "\n\n"
         if current is not None:
             s += f"""Currently working on "{d_dialogs[current].chat.title}"\n"""
         if finished or pending or d_dialogs:
@@ -297,12 +224,6 @@ async def main():
             db.unselect_channel()
         await status_msg.announce_finish()
         print("Reached finish")
-
-
-#@app.on_message(filters.private & filters.command("status"))
-#async def status_handler(client: Client, message: Message):
-#    status = get_channel_counts()
-#    await message.reply_text(status)
 
 
 if __name__ == "__main__":
