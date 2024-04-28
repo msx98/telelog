@@ -19,6 +19,7 @@ class MongoBackend(BaseBackend):
     def __init__(
         self,
         *,
+        name = "mongo",
         host = None,
         user = None,
         password = None,
@@ -31,7 +32,7 @@ class MongoBackend(BaseBackend):
             password = password or MONGO_INITDB_ROOT_PASSWORD,
         )
         self.db = self._conn[database or MONGO_DATABASE]
-        super().__init__(**kwargs)
+        super().__init__(name, **kwargs)
     
     @property
     def is_connected(self) -> bool:
@@ -111,9 +112,3 @@ class MongoBackend(BaseBackend):
 
     def count_dialogs(self) -> int:
         return self.db["dialogs"].count_documents({})
-    
-    def unselect_channel(self):
-        assert self._selected_channel is not None
-        self.add_channel(self._selected_channel)
-        self._selected_channel = None
-        os.remove(f"{self._session_dir}/.last_write.json")

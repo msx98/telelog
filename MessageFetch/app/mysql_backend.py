@@ -85,6 +85,7 @@ class MySQLBackend(BaseBackendWithQueue):
 
     def __init__(
         self,
+        name = "mysql",
         *,
         host = None,
         port = None,
@@ -98,7 +99,7 @@ class MySQLBackend(BaseBackendWithQueue):
                                             user = user or MYSQL_USER,
                                             password = password or MYSQL_PASSWORD,
                                             port = port or MYSQL_PORT,)
-        super().__init__(**kwargs)
+        super().__init__(name, **kwargs)
 
     def add_messages(self, messages):
         #print(f"Inserting {len(messages)} messages")

@@ -10,17 +10,19 @@ from mysql_backend import normalize_message
 import json
 from pyrogram import Client, filters
 from pyrogram.enums import ChatType
-from pyrogram.types import Message, User, Chat, Dialog
+from pyrogram.types import Message, User, Chat, Dialog, ChatPreview
 from pyrogram.errors import RPCError, FloodWait, Flood
 from mysql_backend import MySQLBackend
 from mongo_backend import MongoBackend
 from pg_backend import PostgresBackend
+from base_backend import StoredDialog
 import datetime
 import time
 from consts import *
 import signal
 import sys
 from typing import Optional
+import random
 
 
 print("Connecting to DB")
@@ -71,9 +73,6 @@ async def get_dialogs() -> Dict[int, Dialog]:
     async for dialog in my_dialogs:
         d[dialog.chat.id] = dialog
     return d
-
-
-from mongo_backend import StoredDialog
 
 
 class StatusMessage:
@@ -166,6 +165,23 @@ class StatusMessage:
         else:
             print(f"No channels yet")
     
+    async def update_text(self, s: str, force: bool = None):
+        if not s:
+            return
+        if s == self.last_s:
+            return
+        if (time.time() < self.next_update) and not force:
+            return
+        try:
+            await self.message.edit_text(s)
+            self.announce_update()
+        except FloodWait as e:
+            print(f"Got floodwait with {e.value}")
+            self.next_update = time.time() + float(e.value) + self.update_interval
+        except Exception as e:
+            print(f"Got exception {e}")
+            self.next_update = time.time() + self.update_interval
+
     async def close(self):
         await self.message.delete()
         self.message = None
@@ -174,6 +190,7 @@ class StatusMessage:
 async def main():
     status_msg = StatusMessage()
     await status_msg.start()
+    first_run = True
 
     while True:
         channel_counts: Dict[int, int] = dict()
@@ -182,6 +199,19 @@ async def main():
         print("Fetching dialogs")
         current_dialogs: Dict[int, Dialog] = await get_dialogs()
         print(f"Got {len(current_dialogs)} dialogs")
+
+        if first_run:
+            i = 0
+            sample_dialogs = random.sample(list(current_dialogs.keys()), 3)
+            for chat_id in sample_dialogs:
+                try:
+                    chat: Chat|ChatPreview = await app.get_chat(chat_id)
+                except FloodWait as e:
+                    time.sleep(e.value)
+                    break
+                db.add_channel(chat, update_top_message_id=False)
+
+        first_run = False
         await status_msg.update(d_dialogs=current_dialogs, d_counts=channel_counts, pending=pending, finished=finished, current=None)
         
         result = db.delete_last_write()

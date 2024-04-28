@@ -1,7 +1,7 @@
 from typing import Tuple, Dict, Any, Optional, List
 from collections import OrderedDict
 import pyrogram.types
-from pyrogram.types import Message, User, Chat, ChatReactions, Reaction, Poll, PollOption, Dialog
+from pyrogram.types import Message, User, Chat, ChatReactions, Reaction, Poll, PollOption, Dialog, ChatPreview
 import psycopg2
 from psycopg2.extensions import connection as PostgresConnection
 import threading
@@ -129,26 +129,33 @@ def perform_insert_message(cur, message: Message):
             )
 
 
-def perform_insert_dialog(cur, dialog: Dialog, update_top_message_id: bool = False):
-    chat: Chat = dialog.chat
+def perform_insert_dialog(cur, dialog: Dialog|Chat|ChatPreview, update_top_message_id: bool = False):
+    top_message_id = None
+    if isinstance(dialog, Dialog):
+        chat: Chat = dialog.chat
+        top_message_id = dialog.top_message.id if dialog.top_message else None
+    elif isinstance(dialog, (Chat, ChatPreview)):
+        chat = dialog
+    else:
+        raise ValueError(f"Incorrect dialog type: {type(dialog)}")
     if chat is None:
         return
     chat_dict = dict(
         chat_id = chat.id,
-        top_message_id = dialog.top_message.id if dialog.top_message else None,
-        title = chat.title,
-        first_name = chat.first_name,
-        last_name = chat.last_name,
-        username = chat.username,
-        invite_link = chat.invite_link,
+        top_message_id = top_message_id,
+        title = getattr(chat, "title", None),
+        first_name = getattr(chat, "first_name", None),
+        last_name = getattr(chat, "last_name", None),
+        username = getattr(chat, "username", None),
+        invite_link = getattr(chat, "invite_link", None),
         type = chat.type.value.lower(),
-        members_count = chat.members_count,
-        is_verified = chat.is_verified,
-        is_restricted = chat.is_restricted,
-        is_scam = chat.is_scam,
-        is_fake = chat.is_fake,
-        is_support = chat.is_support,
-        linked_chat_id = chat.linked_chat.id if chat.linked_chat else None
+        members_count = getattr(chat, "members_count", None),
+        is_verified = getattr(chat, "is_verified", None),
+        is_restricted = getattr(chat, "is_restricted", None),
+        is_scam = getattr(chat, "is_scam", None),
+        is_fake = getattr(chat, "is_fake", None),
+        is_support = getattr(chat, "is_support", None),
+        linked_chat_id = chat.linked_chat.id if getattr(chat, "linked_chat", None) else None
     )
     dict_keys = list(chat_dict.keys())
     for k in dict_keys:
@@ -243,6 +250,7 @@ class PostgresBackend(BaseBackendWithQueue):
 
     def __init__(
         self,
+        name = "postgres",
         *,
         host = None,
         port = None,
@@ -258,14 +266,14 @@ class PostgresBackend(BaseBackendWithQueue):
             password = password or POSTGRES_PASSWORD,
             database = database or POSTGRES_DB,
         )
-        super().__init__(**kwargs)
+        super().__init__(name, **kwargs)
         print(f"Connected to Postgres at {host}:{port}")
 
     @property
     def is_connected(self):
         return (isinstance(self._conn, PostgresConnection) and self._conn.status == psycopg2.extensions.STATUS_READY)
     
-    def add_channel(self, dialog: Dialog, update_top_message_id = True):
+    def add_channel(self, dialog: Dialog|Chat|ChatPreview, update_top_message_id = True):
         with self.lock:
             cur = self._conn.cursor()
             perform_insert_dialog(cur, dialog, update_top_message_id)

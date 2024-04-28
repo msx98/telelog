@@ -74,12 +74,12 @@ class BaseBackend(abc.ABC):
     _stored_dialogs: Dict[int, StoredDialog] = None
     _session_dir = None
 
-    def __init__(self, **kwargs):
+    def __init__(self, name: str, **kwargs):
         if not self.is_connected:
             raise Exception("self._conn is inactive")
         self._selected_channel: Dialog = None
         self._stored_dialogs: Dict[int, StoredDialog] = None
-        self._session_dir = kwargs.get("SESSION_DIR", SESSION_DIR)
+        self._session_dir = kwargs.get("SESSION_DIR", SESSION_DIR) + f"/{name}"
         os.makedirs(self._session_dir, exist_ok=True)
 
     def select_channel(self, dialog: pyrogram.types.Dialog):
@@ -206,8 +206,8 @@ class BaseBackendWithQueue(BaseBackend):
     _queue: MessageQueue
     _lock: threading.Lock
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, name: str, **kwargs):
+        super().__init__(name, **kwargs)
         self._lock = threading.Lock()
         self._queue = MessageQueue(self, self._lock, kwargs.get("max_queue_size", 10))
     
@@ -221,4 +221,3 @@ class BaseBackendWithQueue(BaseBackend):
 
     def add_message(self, message: Message):
         self._queue.add_message(message)
-
