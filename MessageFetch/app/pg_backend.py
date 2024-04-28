@@ -9,7 +9,7 @@ import queue
 import time
 import datetime
 from consts import *
-from base_backend import BaseBackend, MessageQueue, media_type_dict, chat_type_dict, StoredDialog
+from base_backend import BaseBackendWithQueue, MessageQueue, media_type_dict, chat_type_dict, StoredDialog
 from emoji_map import EmojiMap
 import json
 
@@ -53,6 +53,8 @@ def perform_insert_message(cur, message: Message):
     options_list: Dict[str, int] = get_poll_options(message) if message.poll else dict()
     chat_id: int = message.chat.id
     message_id: int = message.id
+    if message.outgoing:
+        return
     if chat_id is None or message_id is None:
         return
     sender_id: int = message.from_user.id if message.from_user else \
@@ -231,8 +233,8 @@ def get_message_media(message: Message) -> Tuple[str, str]:
         return None, None, None
 
 
-class PostgresBackend(BaseBackend):
-    conn: PostgresConnection = None
+class PostgresBackend(BaseBackendWithQueue):
+    _conn: PostgresConnection
 
     def __init__(
         self,
@@ -242,54 +244,47 @@ class PostgresBackend(BaseBackend):
         user = None,
         password = None,
         database = None,
-        MAX_QUEUE_SIZE = 10,
         **kwargs,
     ):
-        super().__init__(**kwargs)
-        self.conn: PostgresConnection = psycopg2.connect(
-            host=host or POSTGRES_HOST,
-            port=port or POSTGRES_PORT,
-            user=user or POSTGRES_USER,
-            password=password or POSTGRES_PASSWORD,
-            database=database or POSTGRES_DB,
+        self._conn: PostgresConnection = psycopg2.connect(
+            host = host or POSTGRES_HOST,
+            port = port or POSTGRES_PORT,
+            user = user or POSTGRES_USER,
+            password = password or POSTGRES_PASSWORD,
+            database = database or POSTGRES_DB,
         )
-        self.lock = threading.Lock()
-        if not self.conn.is_connected():
-            raise Exception("Could not connect")
-        self.message_queue = MessageQueue(self, MAX_QUEUE_SIZE)
-        self._stored_dialogs: Dict[int, StoredDialog] = None
-        self.selected_channel: pyrogram.types.Dialog = None
+        super().__init__(**kwargs)
         print(f"Connected to Postgres at {host}:{port}")
 
-    def add_message(self, message: Message):
-        self.message_queue.add_message(message)
-
-    def _add_messages(self, messages):
-        #print(f"Inserting {len(messages)} messages")
-        cur = self.conn.cursor()
-        for message in messages:
-            perform_insert_message(cur, message)
-        self.conn.commit()
-        cur.close()
-        print(f"Inserted {len(messages)} messages")
+    @property
+    def is_connected(self):
+        return (isinstance(self._conn, PostgresConnection) and self._conn.status == psycopg2.extensions.STATUS_READY)
     
-    def count_messages(self) -> Tuple[int, datetime.datetime]:
+    def add_channel(self, dialog: Dialog):
         with self.lock:
-            cur = self.conn.cursor()
-            cur.execute("SELECT COUNT(*), MAX(date) FROM messages")
-            n, date = cur.fetchone()
+            cur = self._conn.cursor()
+            perform_insert_dialog(cur, dialog, update_top_message_id=True)
+            self._conn.commit()
             cur.close()
-            return n, date
-
-    def close(self):
-        print("Obtaining lock to close")
+    
+    def delete_messages(self, channel_id: int, id_min: int, id_max: int):
         with self.lock:
-            print("Obtained lock - closing")
-            self.conn.close()
-        print("Closed SQL connection")
+            cur = self._conn.cursor()
+            cur.execute(f"DELETE FROM {TableNames.MESSAGES} WHERE chat_id = %s AND message_id >= %s AND message_id <= %s", (channel_id, id_min, id_max))
+            self._conn.commit()
+            cur.close()
+
+    def delete_channel(self, channel_id: int):
+        assert self.selected_channel is None
+        with self.lock:
+            cur = self._conn.cursor()
+            cur.execute(f"DELETE FROM {TableNames.MESSAGES} WHERE chat_id = %s", (channel_id,))
+            cur.execute(f"DELETE FROM {TableNames.CHATS} WHERE chat_id = %s", (channel_id,))
+            self._conn.commit()
+            cur.close()
 
     def get_stored_dialogs(self) -> Dict[int, StoredDialog]:
-        cur = self.conn.cursor()
+        cur = self._conn.cursor()
         cur.execute(f"""
                     SELECT chat_id, chat_name, max(message_id)
                     FROM {TableNames.MESSAGES}
@@ -305,7 +300,7 @@ class PostgresBackend(BaseBackend):
 
     def get_stored_dialogs_fast(self) -> Dict[int, StoredDialog]:
         # Return: d[channel_id] = (channel_name, max_message_id)
-        cur = self.conn.cursor()
+        cur = self._conn.cursor()
         cur.execute(f"SELECT chat_id, chat_name, top_message_id FROM {TableNames.CHATS}")
         d = dict()
         for row in cur.fetchall():
@@ -313,70 +308,33 @@ class PostgresBackend(BaseBackend):
         cur.close()
         self._stored_dialogs = d
         return d
-    
-    def select_channel(self, dialog: pyrogram.types.Dialog):
-        assert self.selected_channel is None
-        self.selected_channel = dialog
-        assert self._stored_dialogs
-        max_id = self._stored_dialogs[dialog.chat.id].max_id if dialog.chat.id in self._stored_dialogs else -1
-        channel_id = dialog.chat.id
-        with open(f"{self.session_dir}/.last_write.json", "w") as f:
-            f.write(json.dumps({
-                "channel_id": channel_id,
-                "channel_name": dialog.chat.title,
-                "id_end": max_id,
-                "id_start": dialog.top_message.id if dialog.top_message else max_id
-            }))
-    
-    def delete_channel(self, channel_id: int):
-        assert self.selected_channel is None
-        cur = self.conn.cursor()
-        cur.execute(f"DELETE FROM {TableNames.MESSAGES} WHERE chat_id = %s", (channel_id,))
-        cur.execute(f"DELETE FROM {TableNames.CHATS} WHERE chat_id = %s", (channel_id,))
-        self.conn.commit()
-        cur.close()
-    
+
     def find_channel(self, search_str: str) -> List[Dict[str, Any]]:
-        cur = self.conn.cursor()
+        cur = self._conn.cursor()
         cur.execute(f"SELECT * FROM {TableNames.CHATS} WHERE chat_name LIKE %s", (f"%{search_str}%",))
         dialogs = cur.fetchall()
         cur.close()
         return dialogs
 
     def count_messages(self) -> int:
-        cur = self.conn.cursor()
+        cur = self._conn.cursor()
         cur.execute(f"SELECT COUNT(*) FROM {TableNames.MESSAGES}")
         n = cur.fetchone()[0]
         cur.close()
         return n
 
     def count_dialogs(self) -> int:
-        cur = self.conn.cursor()
+        cur = self._conn.cursor()
         cur.execute(f"SELECT COUNT(*) FROM {TableNames.CHATS}")
         n = cur.fetchone()[0]
         cur.close()
         return n
-    
-    def unselect_channel(self):
-        assert self.selected_channel is not None
-        cur = self.conn.cursor()
-        perform_insert_dialog(cur, self.selected_channel, update_top_message_id=True)
-        self.selected_channel = None
-        os.remove(f"{self.session_dir}/.last_write.json")
-    
-    def delete_last_write(self):
-        if not os.path.exists(f"{self.session_dir}/.last_write.json"):
-            return None
-        with open(f"{self.session_dir}/.last_write.json", "r") as f:
-            data = json.loads(f.read())
-        channel_id = data["channel_id"]
-        channel_name = data["channel_name"]
-        id_end = data["id_end"]
-        id_start = data["id_start"]
-        assert id_end <= id_start # we receive messages in reverse
-        cur = self.conn.cursor()
-        cur.execute(f"DELETE FROM {TableNames.MESSAGES} WHERE chat_id = %s AND message_id > %s AND message_id <= %s", (channel_id, id_end, id_start))
-        self.conn.commit()
-        cur.close()
-        return (channel_id, channel_name, id_end-id_start+1)
 
+    def _add_messages(self, messages):
+        #print(f"Inserting {len(messages)} messages")
+        cur = self._conn.cursor()
+        for message in messages:
+            perform_insert_message(cur, message)
+        self._conn.commit()
+        cur.close()
+        print(f"Inserted {len(messages)} messages")

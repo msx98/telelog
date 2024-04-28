@@ -1,19 +1,19 @@
 from typing import Tuple, Dict, Any, Optional, List
 from collections import OrderedDict
 import pyrogram.types
-from pyrogram.types import Message, User, Chat, MessageReactions, Reaction
+from pyrogram.types import Message, User, Chat, MessageReactions, Reaction, Dialog
 from pyrogram.enums import ChatType, MessageMediaType
 import os
 import pyrogram
 from pymongo import MongoClient
 from enum import Enum
 import datetime
-from base_backend import clean_dict, StoredDialog
+from base_backend import BaseBackend, clean_dict, StoredDialog
 import json
 
 
-class MongoBackend:
-    conn: MongoClient = None
+class MongoBackend(BaseBackend):
+    _conn: MongoClient = None
 
     def __init__(
         self,
@@ -22,16 +22,15 @@ class MongoBackend:
         MONGO_INITDB_ROOT_USERNAME,
         MONGO_INITDB_ROOT_PASSWORD,
         MONGO_DATABASE,
-        SESSION_DIR,
         **kwargs,
     ):
-        self.conn = MongoClient(MONGO_HOST, username=MONGO_INITDB_ROOT_USERNAME, password=MONGO_INITDB_ROOT_PASSWORD)
-        if not self.conn:
-            raise Exception("Could not connect")
-        self.db = self.conn[MONGO_DATABASE]
-        self._stored_dialogs: Dict[int, StoredDialog] = None
-        self.selected_channel: pyrogram.types.Dialog = None
-        self.session_dir = SESSION_DIR
+        self._conn = MongoClient(MONGO_HOST, username=MONGO_INITDB_ROOT_USERNAME, password=MONGO_INITDB_ROOT_PASSWORD)
+        self.db = self._conn[MONGO_DATABASE]
+        super().__init__(**kwargs)
+    
+    @property
+    def is_connected(self) -> bool:
+        return self._conn is not None
 
     def add_message(self, message: Message):
         if message.outgoing:
@@ -44,6 +43,23 @@ class MongoBackend:
             return
         #print(f"Adding message: {message_norm}")
         self.db["messages"].insert_one(message_norm)
+
+    def add_channel(self, dialog: Dialog):
+        cleaned_dialog = clean_dict(dialog)
+        self.db["dialogs"].update_one(
+            {'_id': cleaned_dialog['chat']['id']}, 
+            {'$set': cleaned_dialog}, 
+            upsert=True,
+        )
+    
+    def delete_channel(self, channel_id: int):
+        assert self.selected_channel is None
+        self.db["messages"].delete_many({"chat.id": channel_id})
+        self.db["dialogs"].delete_many({"_id": channel_id})
+    
+    def find_channel(self, search_str: str) -> List[Dict[str, Any]]:
+        cursor = self.db["dialogs"].find({"chat.title": {"$regex": search_str, "$options": "i"}})
+        return list(cursor)
     
     def get_stored_dialogs(self) -> Dict[int, StoredDialog]:
         # Return: d[channel_id] = (channel_name, max_message_id)
@@ -66,10 +82,6 @@ class MongoBackend:
             d[row["_id"]] = StoredDialog(title=row["chat"]["title"], max_id=row["top_message"]["id"] if ("top_message" in row) else -1)
         self._stored_dialogs = d
         return d
-
-    def close(self):
-        assert self.conn is not None
-        self.conn.close()
     
     def select_channel(self, dialog: pyrogram.types.Dialog):
         assert self.selected_channel is None
@@ -84,15 +96,6 @@ class MongoBackend:
                 "id_end": max_id,
                 "id_start": dialog.top_message.id if dialog.top_message else max_id
             }))
-    
-    def delete_channel(self, channel_id: int):
-        assert self.selected_channel is None
-        self.db["messages"].delete_many({"chat.id": channel_id})
-        self.db["dialogs"].delete_many({"_id": channel_id})
-    
-    def find_channel(self, search_str: str) -> List[Dict[str, Any]]:
-        cursor = self.db["dialogs"].find({"chat.title": {"$regex": search_str, "$options": "i"}})
-        return list(cursor)
 
     def count_messages(self) -> int:
         return self.db["messages"].count_documents({})
@@ -102,12 +105,7 @@ class MongoBackend:
     
     def unselect_channel(self):
         assert self.selected_channel is not None
-        cleaned_dialog = clean_dict(self.selected_channel)
-        self.db["dialogs"].update_one(
-            {'_id': cleaned_dialog['chat']['id']}, 
-            {'$set': cleaned_dialog}, 
-            upsert=True,
-        )
+        self.add_channel(self.selected_channel)
         self.selected_channel = None
         os.remove(f"{self.session_dir}/.last_write.json")
     
