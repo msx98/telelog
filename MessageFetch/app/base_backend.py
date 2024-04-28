@@ -97,9 +97,9 @@ class BaseBackend(abc.ABC):
             }))
 
     def unselect_channel(self):
-        assert self.selected_channel is not None
-        self.add_channel(self.selected_channel)
-        self.selected_channel = None
+        assert self._selected_channel is not None
+        self.add_channel(self._selected_channel, update_top_message_id=True)
+        self._selected_channel = None
         os.remove(f"{self._session_dir}/.last_write.json")
     
     def delete_last_write(self):
@@ -139,7 +139,11 @@ class BaseBackend(abc.ABC):
         raise NotImplementedError()
     
     @abc.abstractmethod
-    def add_channel(self, dialog: Dialog):
+    def add_channel(self, dialog: Dialog, update_top_message_id: bool):
+        raise NotImplementedError()
+    
+    @abc.abstractmethod
+    def add_messages(self, messages: Iterable[Message]):
         raise NotImplementedError()
 
     @abc.abstractmethod
@@ -172,11 +176,11 @@ class BaseBackend(abc.ABC):
 
 
 class MessageQueue:
-    def __init__(self, db: BaseBackend, max_queue_size: int):
+    def __init__(self, db: BaseBackend, lock: threading.Lock, max_queue_size: int):
         self.db = db
         self.max_queue_size = max_queue_size
         self.queue = queue.Queue()
-        self.lock = db._lock
+        self.lock = lock
         self.last_push = time.time()
         self.thread = threading.Thread(target=self.run)
         self.thread.start()
@@ -193,7 +197,7 @@ class MessageQueue:
                 with self.lock:
                     messages = [self.queue.get() for _ in range(self.queue.qsize())]
                     #print(f"Pushing {len(messages)} messages to DB")
-                    self.db._add_messages(messages)
+                    self.db.add_messages(messages)
                     self.last_push = time.time()
             time.sleep(1)
 
@@ -204,8 +208,8 @@ class BaseBackendWithQueue(BaseBackend):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._queue = MessageQueue(self, kwargs.get("max_queue_size", 10))
         self._lock = threading.Lock()
+        self._queue = MessageQueue(self, self._lock, kwargs.get("max_queue_size", 10))
     
     @property
     def lock(self):
@@ -218,6 +222,3 @@ class BaseBackendWithQueue(BaseBackend):
     def add_message(self, message: Message):
         self._queue.add_message(message)
 
-    @abc.abstractmethod
-    def _add_messages(self, messages: Iterable[Message]):
-        raise NotImplementedError()

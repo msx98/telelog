@@ -1,4 +1,4 @@
-from typing import Tuple, Dict, Any, Optional, List
+from typing import Tuple, Dict, Any, Optional, List, Iterable
 from collections import OrderedDict
 import pyrogram.types
 from pyrogram.types import Message, User, Chat, MessageReactions, Reaction, Dialog
@@ -48,6 +48,20 @@ class MongoBackend(BaseBackend):
             return
         #print(f"Adding message: {message_norm}")
         self.db["messages"].insert_one(message_norm)
+
+    def add_messages(self, messages: Iterable[Message]):
+        message_list = []
+        for message in messages:
+            if message.outgoing:
+                continue
+            if message.chat:
+                assert self._selected_channel is not None
+                assert message.chat.id == self._selected_channel.chat.id
+            message_norm = clean_dict(message)
+            if not message_norm:
+                continue
+            message_list.append(message_norm)
+        self.db["messages"].insert_many(message_list)
 
     def add_channel(self, dialog: Dialog):
         cleaned_dialog = clean_dict(dialog)

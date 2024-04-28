@@ -24,7 +24,7 @@ from typing import Optional
 
 
 print("Connecting to DB")
-db = MongoBackend()
+db = PostgresBackend()
 
 
 print("Connecting to account")

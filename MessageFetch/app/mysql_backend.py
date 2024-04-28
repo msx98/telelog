@@ -7,9 +7,6 @@ import mysql.connector
 from mysql.connector import Error as MySQLError
 from mysql.connector import connection as MySQLConnection
 from base_backend import BaseBackendWithQueue, clean_dict, StoredDialog, chat_type_dict, media_type_dict
-import threading
-import queue
-import time
 import datetime
 from consts import *
 
@@ -83,34 +80,6 @@ def normalize_chat(chat: Chat) -> Dict[str, Optional[str|int]]:
     return chat_dict
 
 
-class MessageQueue:
-    def __init__(self, db, max_queue_size):
-        self.db = db
-        self.max_queue_size = max_queue_size
-        self.queue = queue.Queue()
-        self.lock = db.lock
-        self.last_push = time.time()
-        self.thread = threading.Thread(target=self.run)
-        self.thread.start()
-
-    def add_message(self, message):
-        #print(f"Trying to add message to queue")
-        with self.lock:
-            self.queue.put(message)
-        #print(f"Added message to queue")
-
-    def run(self):
-        while True:
-            if self.queue.qsize() >= self.max_queue_size or time.time() - self.last_push > 5:
-                #print(f"Reached condition - gonna wait for lock")
-                with self.lock:
-                    messages = [self.queue.get() for _ in range(self.queue.qsize())]
-                    #print(f"Pushing {len(messages)} messages to DB")
-                    self.db._add_messages(messages)
-                    self.last_push = time.time()
-            time.sleep(1)
-
-
 class MySQLBackend(BaseBackendWithQueue):
     conn: MySQLConnection = None
 
@@ -131,7 +100,7 @@ class MySQLBackend(BaseBackendWithQueue):
                                             port = port or MYSQL_PORT,)
         super().__init__(**kwargs)
 
-    def _add_messages(self, messages):
+    def add_messages(self, messages):
         #print(f"Inserting {len(messages)} messages")
         cur = self._conn.cursor()
         for message in messages:

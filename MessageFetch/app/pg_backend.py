@@ -68,7 +68,7 @@ def perform_insert_message(cur, message: Message):
     forward_from_message_id: int = message.forward_from_message_id
     reply_to_message_id: int = message.reply_to_message_id
     poll_vote_count: int = sum(options_list.values()) if options_list else None
-    reactions_vote_count: int = sum(get_reactions_list(message).values())
+    reactions_vote_count: int = sum(reactions_list.values()) if reactions_list is not None else None
     media_type, file_id, file_unique_id = get_message_media(message)
     perform_insert(
         cur,
@@ -93,37 +93,40 @@ def perform_insert_message(cur, message: Message):
         on_conflict_keys=["chat_id", "message_id"],
         on_conflict_update_keys="*",
     )
-    for r, c in reactions_list.items():
-        r_norm = c / reactions_vote_count if reactions_vote_count else 0
-        perform_insert(
-            cur,
-            table_name=TableNames.REACTIONS,
-            values=OrderedDict(
-                chat_id=chat_id,
-                message_id=message_id,
-                reaction_id=r,
-                reaction_votes_norm=r_norm,
-                reaction_votes_abs=c
-            ),
-            on_conflict_keys=["chat_id", "message_id", "reaction_id"],
-            on_conflict_update_keys="*",
-        )
-    for o, v in options_list.items():
-        v_norm = v / poll_vote_count if poll_vote_count else 0
-        perform_insert(
-            cur,
-            table_name=TableNames.POLLS,
-            values=OrderedDict(
-                chat_id=chat_id,
-                message_id=message_id,
-                poll_option_id=o,
-                poll_option_text=o,
-                poll_option_votes_norm=v_norm,
-                poll_option_votes_abs=v
-            ),
-            on_conflict_keys=["chat_id", "message_id", "poll_option_id"],
-            on_conflict_update_keys="*",
-        )
+    if reactions_list:
+        for r, c in reactions_list.items():
+            r_norm = c / reactions_vote_count if reactions_vote_count else 0
+            perform_insert(
+                cur,
+                table_name=TableNames.REACTIONS,
+                values=OrderedDict(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    reaction_id=r,
+                    reaction_votes_norm=r_norm,
+                    reaction_votes_abs=c
+                ),
+                on_conflict_keys=["chat_id", "message_id", "reaction_id"],
+                on_conflict_update_keys="*",
+            )
+    if options_list:
+        for i, opt in enumerate(options_list.items()):
+            o, v = opt
+            v_norm = v / poll_vote_count if poll_vote_count else 0
+            perform_insert(
+                cur,
+                table_name=TableNames.POLLS,
+                values=OrderedDict(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    poll_option_id=i,
+                    poll_option_text=o,
+                    poll_option_votes_norm=v_norm,
+                    poll_option_votes_abs=v
+                ),
+                on_conflict_keys=["chat_id", "message_id", "poll_option_id"],
+                on_conflict_update_keys="*",
+            )
 
 
 def perform_insert_dialog(cur, dialog: Dialog, update_top_message_id: bool = False):
@@ -138,7 +141,7 @@ def perform_insert_dialog(cur, dialog: Dialog, update_top_message_id: bool = Fal
         last_name = chat.last_name,
         username = chat.username,
         invite_link = chat.invite_link,
-        chat_type = chat_type_dict[chat.type],
+        type = chat.type.value.lower(),
         members_count = chat.members_count,
         is_verified = chat.is_verified,
         is_restricted = chat.is_restricted,
@@ -147,8 +150,9 @@ def perform_insert_dialog(cur, dialog: Dialog, update_top_message_id: bool = Fal
         is_support = chat.is_support,
         linked_chat_id = chat.linked_chat.id if chat.linked_chat else None
     )
-    for k, v in chat_dict.items():
-        if v is None:
+    dict_keys = list(chat_dict.keys())
+    for k in dict_keys:
+        if chat_dict[k] is None:
             chat_dict.pop(k)
     if "chat_id" not in chat_dict:
         return
@@ -186,7 +190,8 @@ def get_reactions_list(message: Message) -> Dict[int, int]:
         i += 1
     if not isinstance(reactions, list):
         return None # FIXME report error
-    return {EmojiMap.to_int(r.emoji): r.count for r in reactions}
+    return {EmojiMap.to_int(r.emoji if r.emoji is not None else r.custom_emoji_id): r.count
+            for r in reactions}
 
 
 def get_poll_options(message: Message) -> Dict[str, int]:
@@ -260,10 +265,10 @@ class PostgresBackend(BaseBackendWithQueue):
     def is_connected(self):
         return (isinstance(self._conn, PostgresConnection) and self._conn.status == psycopg2.extensions.STATUS_READY)
     
-    def add_channel(self, dialog: Dialog):
+    def add_channel(self, dialog: Dialog, update_top_message_id = True):
         with self.lock:
             cur = self._conn.cursor()
-            perform_insert_dialog(cur, dialog, update_top_message_id=True)
+            perform_insert_dialog(cur, dialog, update_top_message_id)
             self._conn.commit()
             cur.close()
     
@@ -301,7 +306,7 @@ class PostgresBackend(BaseBackendWithQueue):
     def get_stored_dialogs_fast(self) -> Dict[int, StoredDialog]:
         # Return: d[channel_id] = (channel_name, max_message_id)
         cur = self._conn.cursor()
-        cur.execute(f"SELECT chat_id, chat_name, top_message_id FROM {TableNames.CHATS}")
+        cur.execute(f"SELECT chat_id, title, top_message_id FROM {TableNames.CHATS}")
         d = dict()
         for row in cur.fetchall():
             d[row[0]] = StoredDialog(title=row[1], max_id=row[2])
@@ -330,7 +335,7 @@ class PostgresBackend(BaseBackendWithQueue):
         cur.close()
         return n
 
-    def _add_messages(self, messages):
+    def add_messages(self, messages):
         #print(f"Inserting {len(messages)} messages")
         cur = self._conn.cursor()
         for message in messages:
