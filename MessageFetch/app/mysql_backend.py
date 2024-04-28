@@ -1,6 +1,5 @@
 from typing import Tuple, Dict, Any, Optional, List
 from collections import OrderedDict
-import pyrogram.types
 from pyrogram.types import Message, User, Chat
 from pyrogram.enums import ChatType, MessageMediaType
 import os
