@@ -1,5 +1,5 @@
-CREATE TYPE IF NOT EXISTS chat_type AS ENUM ('private', 'bot', 'group', 'supergroup', 'channel');
-CREATE TYPE IF NOT EXISTS media_type AS ENUM (
+CREATE TYPE chat_type AS ENUM ('private', 'bot', 'group', 'supergroup', 'channel');
+CREATE TYPE media_type AS ENUM (
     'document', 
     'audio', 
     'voice', 
@@ -11,7 +11,7 @@ CREATE TYPE IF NOT EXISTS media_type AS ENUM (
     'photo'
 );
 
-CREATE TABLE IF NOT EXISTS chats (
+CREATE TABLE chats (
     chat_id BIGINT NOT NULL,
     top_message_id BIGINT,
     title TEXT,
@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS chats (
     PRIMARY KEY (chat_id)
 );
 
-CREATE TABLE IF NOT EXISTS messages (
+CREATE TABLE messages (
     chat_id BIGINT NOT NULL,
     message_id BIGINT NOT NULL,
     sender_id BIGINT,
@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS messages (
     PRIMARY KEY (chat_id, message_id)
 );
 
-CREATE TABLE IF NOT EXISTS reactions (
+CREATE TABLE reactions (
     chat_id BIGINT NOT NULL,
     message_id BIGINT NOT NULL,
     reaction_id INTEGER,
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS reactions (
 );
 
 
-CREATE TABLE IF NOT EXISTS polls (
+CREATE TABLE polls (
     chat_id BIGINT NOT NULL,
     message_id BIGINT NOT NULL,
     poll_option_id INTEGER,
@@ -70,13 +70,13 @@ CREATE TABLE IF NOT EXISTS polls (
     PRIMARY KEY (chat_id, message_id, poll_option_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_chat ON messages (chat_id);
-CREATE INDEX IF NOT EXISTS idx_date ON messages (
+CREATE INDEX idx_chat ON messages (chat_id);
+CREATE INDEX idx_date ON messages (
     (date_part('year', date)),
     (date_part('month', date)),
     (date_part('day', date))
 );
-CREATE INDEX IF NOT EXISTS idx_reaction ON reactions (reaction_id);
+CREATE INDEX idx_reaction ON reactions (reaction_id);
 
 ALTER TABLE reactions ADD CONSTRAINT fk_reactions_message FOREIGN KEY (chat_id, message_id) REFERENCES messages (chat_id, message_id);
 ALTER TABLE polls ADD CONSTRAINT fk_polls_message FOREIGN KEY (chat_id, message_id) REFERENCES messages (chat_id, message_id);
