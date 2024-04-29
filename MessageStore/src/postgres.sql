@@ -35,7 +35,6 @@ CREATE TABLE IF NOT EXISTS messages (
     message_id BIGINT NOT NULL,
     sender_id BIGINT,
     text TEXT,
-    embedding vector(768),
     date TIMESTAMP,
     views INTEGER CHECK (views >= 0),
     forwards INTEGER CHECK (forwards >= 0),
@@ -46,6 +45,7 @@ CREATE TABLE IF NOT EXISTS messages (
     reactions_vote_count INTEGER CHECK (reactions_vote_count >= 0),
     media_type media_type,
     file_id TEXT,
+    file_unique_id TEXT,
     PRIMARY KEY (chat_id, message_id)
 );
 
