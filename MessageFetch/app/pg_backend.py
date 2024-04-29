@@ -1,7 +1,7 @@
 from typing import Tuple, Dict, Any, Optional, List
 from collections import OrderedDict
 import pyrogram.types
-from pyrogram.types import Message, User, Chat, ChatReactions, Reaction, Poll, PollOption, Dialog, ChatPreview
+from pyrogram.types import Message, User, Chat, ChatReactions, Reaction, Poll, PollOption, Dialog, ChatPreview, MessageEntity
 import psycopg2
 from psycopg2.extensions import connection as PostgresConnection
 import threading
@@ -212,9 +212,15 @@ def get_poll_options(message: Message) -> Dict[str, int]:
 
 def get_message_text(message: Message) -> str:
     if message.text:
-        return message.text
+        if isinstance(message.text, str):
+            return message.text
+        elif hasattr(message.text, "markdown"):
+            return message.text.markdown
     elif message.caption:
-        return message.caption
+        if isinstance(message.caption, str):
+            return message.caption
+        elif hasattr(message.caption, "markdown"):
+            return message.caption.markdown
     elif message.poll:
         return message.poll.question
     else:
@@ -299,7 +305,7 @@ class PostgresBackend(BaseBackendWithQueue):
     def get_stored_dialogs(self) -> Dict[int, StoredDialog]:
         cur = self._conn.cursor()
         cur.execute(f"""
-                    SELECT chat_id, chat_name, max(message_id)
+                    SELECT chat_id, title, max(message_id)
                     FROM {TableNames.MESSAGES}
                     LEFT JOIN {TableNames.CHATS} ON {TableNames.MESSAGES}.chat_id = {TableNames.CHATS}.chat_id
                     GROUP BY chat_id

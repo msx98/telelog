@@ -64,7 +64,7 @@ class MongoBackend(BaseBackend):
             message_list.append(message_norm)
         self.db["messages"].insert_many(message_list)
 
-    def add_channel(self, dialog: Dialog):
+    def add_channel(self, dialog: Dialog, *args, **kwargs):
         cleaned_dialog = clean_dict(dialog)
         self.db["dialogs"].update_one(
             {'_id': cleaned_dialog['chat']['id']}, 
@@ -74,6 +74,8 @@ class MongoBackend(BaseBackend):
     
     def delete_messages(self, channel_id: int, id_min: int, id_max: int):
         assert self._selected_channel is None
+        assert id_min <= id_max
+        print(f"Deleting messages from {channel_id} in range {id_min} to {id_max}")
         r_count = self.db["messages"].delete_many({"chat.id": channel_id, "id": {"$gt": id_min, "$lte": id_max}})
     
     def delete_channel(self, channel_id: int):

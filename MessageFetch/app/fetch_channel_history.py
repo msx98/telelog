@@ -14,7 +14,7 @@ from pyrogram.types import Message, User, Chat, Dialog, ChatPreview
 from pyrogram.errors import RPCError, FloodWait, Flood
 from mysql_backend import MySQLBackend
 from mongo_backend import MongoBackend
-from pg_backend import PostgresBackend
+#from pg_backend import PostgresBackend
 from base_backend import StoredDialog
 import datetime
 import time
@@ -26,7 +26,7 @@ import random
 
 
 print("Connecting to DB")
-db = PostgresBackend()
+db = MongoBackend()
 
 
 print("Connecting to account")
@@ -190,7 +190,7 @@ class StatusMessage:
 async def main():
     status_msg = StatusMessage()
     await status_msg.start()
-    first_run = True
+    first_run = False
 
     while True:
         channel_counts: Dict[int, int] = dict()
@@ -201,6 +201,7 @@ async def main():
         print(f"Got {len(current_dialogs)} dialogs")
 
         if first_run:
+            print("This is our first run")
             i = 0
             sample_dialogs = random.sample(list(current_dialogs.keys()), 3)
             for chat_id in sample_dialogs:
@@ -213,8 +214,10 @@ async def main():
 
         first_run = False
         await status_msg.update(d_dialogs=current_dialogs, d_counts=channel_counts, pending=pending, finished=finished, current=None)
+        print("Updated msg")
         
         result = db.delete_last_write()
+        print(f"Deleted last write result {result}")
         if result is not None:
             channel_id, channel_name, delete_count = result
             print(f"Deleted {delete_count} messages from the write attempt to {channel_name}")

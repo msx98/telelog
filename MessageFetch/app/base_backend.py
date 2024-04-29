@@ -113,6 +113,7 @@ class BaseBackend(abc.ABC):
         id_start = data["id_start"]
         assert id_end <= id_start # we receive messages in reverse
         self.delete_messages(channel_id, id_end, id_start)
+        os.remove(f"{self._session_dir}/.last_write.json")
         return (channel_id, channel_name, id_end-id_start+1)
 
     def close(self):
@@ -209,7 +210,10 @@ class BaseBackendWithQueue(BaseBackend):
     def __init__(self, name: str, **kwargs):
         super().__init__(name, **kwargs)
         self._lock = threading.Lock()
-        self._queue = MessageQueue(self, self._lock, kwargs.get("max_queue_size", 10))
+        if kwargs.get("debug_read_only", None) is True:
+            self._queue = None
+        else:
+            self._queue = MessageQueue(self, self._lock, kwargs.get("max_queue_size", 10))
     
     @property
     def lock(self):
