@@ -7,3 +7,5 @@ RUN cd /tmp && \
     cd pgvector && \
     make; \
     make install
+
+COPY ./src/postgres.sql /docker-entrypoint-initdb.d/init.sql
