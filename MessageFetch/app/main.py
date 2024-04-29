@@ -3,15 +3,16 @@
 from pyrogram import Client, filters
 from pyrogram.enums import ChatType
 from pyrogram.types import Message, User, Chat
-from mysql_backend import MySQLBackend
-from mongo_backend import MongoBackend
+#from mysql_backend import MySQLBackend
+#from mongo_backend import MongoBackend
+from pg_backend import PostgresBackend
 import datetime
 from consts import *
 import signal
 import sys
 
 print("Connecting to DB")
-db = MySQLBackend()
+db = PostgresBackend()
 
 
 print("Connecting to account")
