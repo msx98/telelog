@@ -9,7 +9,8 @@ from pyrogram.types import Dialog, Chat, Message
 import datetime
 import pyrogram.client
 import json
-from consts import *
+from common.consts import consts
+from common.backend.config import Config
 from collections import namedtuple
 StoredDialog = namedtuple("Dialog", ["title", "max_id"])
 
@@ -44,7 +45,7 @@ media_type_dict = {
 
 primitive_types = (bool, int, str, float, datetime.datetime, type(None))
 unparseable_types = (pyrogram.client.Client,)
-def clean_dict(d_old, rec_level=1, max_rec=20) -> Dict:
+def clean_dict(d_old, rec_level=1, max_rec=25) -> Dict:
     if isinstance(d_old, unparseable_types):
         return None
     if rec_level > max_rec:
@@ -72,24 +73,24 @@ class BaseBackend(abc.ABC):
     _conn = None
     _selected_channel: Dialog = None
     _stored_dialogs: Dict[int, StoredDialog] = None
-    _session_dir = None
+    _config: Config = None
 
     def __init__(self, name: str, **kwargs):
         if not self.is_connected:
             raise Exception("self._conn is inactive")
         self._selected_channel: Dialog = None
         self._stored_dialogs: Dict[int, StoredDialog] = None
-        self._session_dir = kwargs.get("SESSION_DIR", SESSION_DIR) + f"/{name}"
-        os.makedirs(self._session_dir, exist_ok=True)
+        self._config = kwargs.get("config", Config(project="sessionstore"))
 
     def select_channel(self, dialog: pyrogram.types.Dialog):
         assert self._selected_channel is None
         self._selected_channel = dialog
-        assert self._stored_dialogs
+        #assert self._stored_dialogs
         max_id = self._stored_dialogs[dialog.chat.id].max_id if dialog.chat.id in self._stored_dialogs else -1
+        if max_id is None:
+            max_id = -1
         channel_id = dialog.chat.id
-        with open(f"{self._session_dir}/.last_write.json", "w") as f:
-            f.write(json.dumps({
+        self._config.set("last_write", json.dumps({
                 "channel_id": channel_id,
                 "channel_name": dialog.chat.title,
                 "id_end": max_id,
@@ -100,21 +101,21 @@ class BaseBackend(abc.ABC):
         assert self._selected_channel is not None
         self.add_channel(self._selected_channel, update_top_message_id=True)
         self._selected_channel = None
-        os.remove(f"{self._session_dir}/.last_write.json")
+        self._config.unset("last_write")
     
     def delete_last_write(self):
-        if not os.path.exists(f"{self._session_dir}/.last_write.json"):
+        data = self._config.get("last_write", None)
+        if data is None:
             return None
-        with open(f"{self._session_dir}/.last_write.json", "r") as f:
-            data = json.loads(f.read())
+        data = json.loads(data)
         channel_id = data["channel_id"]
         channel_name = data["channel_name"]
         id_end = data["id_end"]
         id_start = data["id_start"]
         assert id_end <= id_start # we receive messages in reverse
         self.delete_messages(channel_id, id_end, id_start)
-        os.remove(f"{self._session_dir}/.last_write.json")
-        return (channel_id, channel_name, id_end-id_start+1)
+        self._config.unset("last_write")
+        return (channel_id, channel_name, id_start-id_end+1)
 
     def close(self):
         print("db.close() - start")
@@ -129,6 +130,15 @@ class BaseBackend(abc.ABC):
         else:
             print(f"db.close() - connection already closed")
         print("db.close() - end")
+    
+    def add_admin(self, user_id: int):
+        admins = self._config.get("admins", "")
+        if str(user_id) not in admins:
+            self._config.set("admins", admins + f"{user_id},")
+
+    def is_admin(self, user_id: int) -> bool:
+        admins = self._config.get("admins", "").strip().split(",")[:-1]
+        return str(user_id) in admins
     
     @property
     @abc.abstractmethod
@@ -160,7 +170,7 @@ class BaseBackend(abc.ABC):
         raise NotImplementedError()
     
     @abc.abstractmethod
-    def get_stored_dialogs_fast(self) -> Dict[int, StoredDialog]:
+    def get_stored_dialogs_committed(self) -> Dict[int, StoredDialog]:
         raise NotImplementedError()
     
     @abc.abstractmethod
@@ -183,6 +193,7 @@ class MessageQueue:
         self.queue = queue.Queue()
         self.lock = lock
         self.last_push = time.time()
+        self.stopped = False
         self.thread = threading.Thread(target=self.run)
         self.thread.start()
 
@@ -192,7 +203,7 @@ class MessageQueue:
             self.queue.put(message)
 
     def run(self):
-        while True:
+        while not self.stopped:
             if self.queue.qsize() >= self.max_queue_size or time.time() - self.last_push > 5:
                 #print(f"Reached condition - gonna wait for lock")
                 with self.lock:
@@ -201,6 +212,10 @@ class MessageQueue:
                     self.db.add_messages(messages)
                     self.last_push = time.time()
             time.sleep(1)
+
+    def stop(self):
+        self.stopped = True
+        self.thread.join()
 
 
 class BaseBackendWithQueue(BaseBackend):
@@ -221,6 +236,7 @@ class BaseBackendWithQueue(BaseBackend):
     
     def close(self):
         with self._lock:
+            self._queue.stop()
             super().close()
 
     def add_message(self, message: Message):

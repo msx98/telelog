@@ -8,9 +8,9 @@ import pyrogram
 from pymongo import MongoClient
 from enum import Enum
 import datetime
-from base_backend import BaseBackend, clean_dict, StoredDialog
+from common.backend.base_backend import BaseBackend, clean_dict, StoredDialog
 import json
-from consts import *
+from common.consts import consts
 
 
 class MongoBackend(BaseBackend):
@@ -27,11 +27,11 @@ class MongoBackend(BaseBackend):
         **kwargs,
     ):
         self._conn = MongoClient(
-            host = host or MONGO_HOST,
-            username = user or MONGO_INITDB_ROOT_USERNAME,
-            password = password or MONGO_INITDB_ROOT_PASSWORD,
+            host = host or consts["MONGO_HOST"],
+            username = user or consts["MONGO_INITDB_ROOT_USERNAME"],
+            password = password or consts["MONGO_INITDB_ROOT_PASSWORD"],
         )
-        self.db = self._conn[database or MONGO_DATABASE]
+        self.db = self._conn[database or consts["MONGO_DATABASE"]]
         super().__init__(name, **kwargs)
     
     @property
@@ -64,7 +64,9 @@ class MongoBackend(BaseBackend):
             message_list.append(message_norm)
         self.db["messages"].insert_many(message_list)
 
-    def add_channel(self, dialog: Dialog, *args, **kwargs):
+    def add_channel(self, dialog: Dialog, update_top_message_id = True, *args, **kwargs):
+        if update_top_message_id is False:
+            raise NotImplementedError("update_top_message_id=False is not supported")
         cleaned_dialog = clean_dict(dialog)
         self.db["dialogs"].update_one(
             {'_id': cleaned_dialog['chat']['id']}, 
@@ -100,7 +102,7 @@ class MongoBackend(BaseBackend):
         self._stored_dialogs = d
         return d
 
-    def get_stored_dialogs_fast(self) -> Dict[int, StoredDialog]:
+    def get_stored_dialogs_committed(self) -> Dict[int, StoredDialog]:
         # Return: d[channel_id] = (channel_name, max_message_id)
         cursor = self.db["dialogs"].find() # FIXME - use this once dialogs collection is fixed
         d = dict()

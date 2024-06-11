@@ -1,0 +1,20 @@
+FROM runpod/pytorch:2.2.1-py3.10-cuda12.1.1-devel-ubuntu22.04
+
+ARG SENTENCE_TRANSFORMERS_MODEL_NAME=paraphrase-multilingual-mpnet-base-v2
+ENV SENTENCE_TRANSFORMERS_MODEL_NAME=${SENTENCE_TRANSFORMERS_MODEL_NAME}
+
+RUN apt-get update && apt-get install -y git iputils-ping
+
+RUN pip3 install runpod sentence-transformers python-dotenv psycopg2-binary sqlalchemy git+https://github.com/pgvector/pgvector-python.git
+
+ADD ./Pipeline/MessageEmbed/download.py /root/download.py
+
+RUN SENTENCE_TRANSFORMERS_MODEL_NAME=${SENTENCE_TRANSFORMERS_MODEL_NAME} python3 -u /root/download.py
+
+ENV PYTHONPATH=/app
+
+ADD ./Pipeline /app
+
+WORKDIR /app
+
+CMD ["python3", "-u", "/app/MessageEmbed/main.py"]
