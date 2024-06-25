@@ -29,7 +29,7 @@ Design an aggregator that effectively detects and summarizes events from a strea
 
 ### Baseline
 
-1. **Message Encoding:** Use a pre-trained language model (something from the [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard)) as the message encoder (`Em`).
+1. **Message Encoding:** Use a pre-trained language model ([MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard)) as the message encoder (`Em`).
 2. **Event Encoding:**  Define the event encoder (`Ev`) as a simple average of the message embeddings within a given cluster.
 3. **Aggregation:** 
     -  Filter messages within a recent time window (e.g., past 24 hours) and have a hype score above the sender's average.
