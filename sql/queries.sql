@@ -1,0 +1,1 @@
+select c.title, m.date, u.phone_number, m.text from messages m inner join (select * from users where phone_number is not null) u using(sender_id) inner join (select chat_id,title from chats) c using(chat_id);
