@@ -12,6 +12,7 @@ import asyncio
 
 TELEGRAM_ENV_JSON_PATH = ".telegram.env.json"
 TELEGRAM_ENV_PATH = ".telegram.env"
+assert os.path.exists(TELEGRAM_ENV_PATH), f"Telegram env file does not exist at {TELEGRAM_ENV_PATH}"
 
 
 async def get_session_string(*, api_id: str, api_hash: str, phone_number: str, two_factor_pass: str) -> str:
