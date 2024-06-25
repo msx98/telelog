@@ -6,6 +6,11 @@ This project aims to detect and summarize major events from a large stream of Te
 
 Design an aggregator that effectively detects and summarizes events from a stream of messages, considering semantic similarity, temporal relationships, and engagements (forwards, sentiment expressed through reactions, views, etc).
 
+## Links to Related Works
+
+- https://www.researchgate.net/publication/262247131_Topic-Focused_Summarization_of_Chat_Conversations
+- https://liu.diva-portal.org/smash/get/diva2:1576483/FULLTEXT01.pdf
+
 ### Formal Definitions
 
 - A message `m` is represented by its attributes: `m.date`, `m.text`, and a "hype" score `m.hype` derived from factors like views, reactions, and forwards (`m.hype ~= (m.views, m.reactions, m.forwards)`). 
