@@ -4,7 +4,7 @@ This project aims to detect and summarize major events from a large stream of Te
 
 ## Core Idea
 
-Design an aggregator that effectively detects and summarizes events from a stream of messages, considering both semantic similarity and temporal relationships.
+Design an aggregator that effectively detects and summarizes events from a stream of messages, considering semantic similarity, temporal relationships, and engagements (forwards, sentiment expressed through reactions, views, etc).
 
 ### Formal Definitions
 
