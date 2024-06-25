@@ -41,6 +41,7 @@ Design an aggregator that effectively detects and summarizes events from a strea
 
 ### Potential Improvements
 
+- **Mass-based Clustering:** Two rocket attacks occurring at 8 AM and 9 AM, respectively, need to be recognized as separate events for the sake of real-time alerts, even though they might be causally linked to a subsequent event like a war declaration at 10 AM. So we might not want to merge them at 9AM, but we would at 10AM. Maybe a weight-based clustering, i.e. adding something akin to a physical mass based on hype, along with a time decay, and finding mass peaks could help tackle this.
 - **Fine-tuning:** Further train the initial message encoder (`Em`) and tokenizer on message trees (i.e. messages and their responses) extracted from the dataset to improve their performance on this specific task.
 - **Time-Aware Embeddings:**  Incorporate temporal information directly into the message embeddings. For instance, create a new encoder `Em'(m)` that combines the message metadata with the standard message embedding (`Em(m)`), perhaps using another encoder. `Em'(m) = f(Em(m), m.date, m.hype)`. Dimensionality might be an issue? (a handful of metadata features would be attenuated by the large embedding size)
 - **Attention-Based Aggregation:**  Instead of clustering, we can explore an attention-like mechanism. Here, the relevance of a message (and its embedding) to a potential event is influenced by not only semantic similarity, but the hype score (which affects `V`) also temporal proximity (which affects `K*V`).
@@ -51,4 +52,3 @@ It does leave the question of how we might train the model to do that without re
     -  Penalize the model based on the deviation of its predicted hype from the actual aggregated hype of the messages in the cluster.
 - **Change Detection:** Calculate the difference in cluster formations between consecutive time steps. Significant changes could signal the emergence of new events.
 - **Per-Chat Aggregation:** Run the pipeline separately for each chat, and then develop a method to aggregate these per-chat event summaries into a global overview.
-- **Mass-based Clustering:** Two rocket attacks occurring at 8 AM and 9 AM, respectively, need to be recognized as separate events for the sake of real-time alerts, even though they might be causally linked to a subsequent event like a war declaration at 10 AM. So we might not want to merge them at 9AM, but we would at 10AM. Maybe a weight-based clustering, i.e. adding something akin to a physical mass based on hype, and finding mass peaks could help tackle this.
