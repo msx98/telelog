@@ -40,6 +40,11 @@ Design an aggregator that effectively detects and summarizes events from a strea
     -  Generate a summary, using a LLM or cheap NER.
 5. **UMAP:** To visualize summaries of the last day.
 
+### Missing
+
+- **Evaluation Metrics**
+- **Training Objectives**
+
 ### Potential Improvements
 
 - **Mass-based Clustering:** Two rocket attacks occurring at 8 AM and 9 AM, respectively, need to be recognized as separate events for the sake of real-time alerts, even though they might be causally linked to a subsequent event like a war declaration at 10 AM. So we might not want to merge them at 9AM, but we would at 10AM. Maybe a weight-based clustering, i.e. adding something akin to a physical mass based on hype, along with a time decay, and finding mass peaks could help tackle this.
