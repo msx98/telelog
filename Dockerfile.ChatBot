@@ -12,6 +12,12 @@ RUN pip3 install git+https://github.com/yt-dlp/yt-dlp.git
 
 RUN pip3 install git+https://github.com/spotDL/spotify-downloader.git
 
+RUN pip3 install -q -U google-generativeai
+
+RUN pip3 uninstall -y pyrogram; pip3 install git+https://github.com/KurimuzonAkuma/pyrogram.git
+
+ENV IS_DOCKER=1
+
 ENV PYTHONPATH=/app
 
 COPY ./Pipeline /app

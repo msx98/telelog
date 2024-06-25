@@ -18,39 +18,34 @@ class EmojiMap:
             for row in result:
                 emoji = row[0].reaction
                 cls.emoji_map[emoji] = row[0].reaction_id
-
-    @classmethod
-    def _save_map(cls):
-        stmt = insert(models.EmojiMap).values([
-            {"reaction": emoji_val, "is_custom": isinstance(emoji_val, int)}
-            for emoji_val, _ in cls.emoji_map.items()
-        ])
-        stmt = stmt.on_conflict_do_update(
-            index_elements=['reaction_id'],
-            set_={"reaction": stmt.excluded.reaction, "is_custom": stmt.excluded.is_custom}
-        )
-        cls.conn.execute(stmt)
-        cls.conn.commit()
     
     @classmethod
-    def _add_emoji(cls, emoji: str|int):
-        e = models.EmojiMap(reaction=str(emoji), is_custom=isinstance(emoji, int))
+    def _add_emoji(cls, emoji: str, is_custom: bool):
+        e = models.EmojiMap(reaction=emoji, is_custom=is_custom)
         with Session(cls.engine) as session:
-            session.add(e)
+            stmt = (
+                insert(models.EmojiMap)
+                .values(reaction=e.reaction, is_custom=e.is_custom)
+                .on_conflict_do_update(
+                    index_elements=[models.EmojiMap.reaction],
+                    set_={models.EmojiMap.is_custom: e.is_custom}
+                )
+                .returning(models.EmojiMap.reaction_id)
+            )
+            result = session.execute(stmt)
+            e.reaction_id = result.fetchone()[0]
             session.flush()
-            session.refresh(e)
+            session.commit()
         assert e.reaction_id is not None
         cls.emoji_map[emoji] = e.reaction_id
     
     @classmethod
     def to_int(cls, emoji: str|int) -> int:
         if isinstance(emoji, (str, int)):
+            is_custom = isinstance(emoji, int)
             emoji = str(emoji)
             if emoji not in cls.emoji_map:
-                cls._add_emoji(emoji)
+                cls._add_emoji(emoji, is_custom)
             return cls.emoji_map[emoji]
         else:
             raise ValueError(f"Unknown emoji type: {emoji} = {type(emoji)}")
-
-
-EmojiMap._reload_map()

@@ -1,0 +1,1 @@
+<message id="{message_id}" sender="{sender_name}" responds_to_sender="{responds_to_sender}" responds_to_message_id="{responds_to_message_id}">{message_text}</msg>

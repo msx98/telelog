@@ -4,6 +4,8 @@ import time
 from common.consts import consts
 from common.backend.config import Config
 import logging
+import asyncio
+import threading
 
 
 def collect_list(
@@ -52,14 +54,9 @@ def pretty_time(seconds: float) -> str:
 
 def create_postgres_engine():
     from sqlalchemy import create_engine
-    import subprocess
     import os
-    postgres_host, postgres_port = os.environ.get("POSTGRES_HOST"), os.environ.get("POSTGRES_PORT")
-    postgres_host_ext, postgres_port_ext = os.environ.get("POSTGRES_HOST_EXTERNAL"), os.environ.get("POSTGRES_PORT_EXTERNAL")
-    try:
-        subprocess.check_output("ping -c 1 {}".format(postgres_host).split(" "))
-    except Exception as e:
-        postgres_host, postgres_port = postgres_host_ext, postgres_port_ext
+    postgres_host = os.environ.get("POSTGRES_HOST_OVERRIDE", os.environ["POSTGRES_HOST"])
+    postgres_port = os.environ.get("POSTGRES_PORT_OVERRIDE", os.environ["POSTGRES_PORT"])
     return create_engine(f"postgresql://{consts['POSTGRES_USER']}:{consts['POSTGRES_PASSWORD']}@{postgres_host}:{postgres_port}/{consts['POSTGRES_DB']}")
 
 
@@ -81,12 +78,48 @@ def load_embedding_model():
     return model
 
 
-def load_pyrogram_session(config: Config, default_session_string: Optional[str] = None):
+def load_pyrogram_session(session_name: str):
     from pyrogram import Client
     import os
-    session_string = config.get("pyrogram_session_string") or default_session_string
-    if session_string:
-        client = Client("session", session_string=session_string)
+    session_string = os.environ[f"TELEGRAM_SESSION_STRING__{session_name}"]
+    proxy = {k:v for k,v in {
+        "scheme": os.environ.get(f"TELEGRAM_PROXY_SCHEME__{session_name}", None),
+        "hostname": os.environ.get(f"TELEGRAM_PROXY_HOSTNAME__{session_name}", None),
+        "port": os.environ.get(f"TELEGRAM_PROXY_PORT__{session_name}", None),
+        "username": os.environ.get(f"TELEGRAM_PROXY_USERNAME__{session_name}", None),
+        "password": os.environ.get(f"TELEGRAM_PROXY_PASSWORD__{session_name}", None),
+    }.items() if v is not None}
+    if proxy:
+        client = Client("session", session_string=session_string, proxy=proxy)
     else:
-        client = Client("listener_fetch", api_id=os.environ["TELEGRAM_API_ID"], api_hash=os.environ["TELEGRAM_API_HASH"], phone_number=os.environ["TELEGRAM_PHONE"], password=os.environ["TELEGRAM_PASS"])
+        client = Client("session", session_string=session_string)
     return client
+
+
+async def run_async(func: Callable, *, check_interval: float = 1, timeout: float = None):
+    result = [None]
+    returned = [False]
+    error = [None]
+    def runner():
+        try:
+            result[0] = func()
+            returned[0] = True
+        except Exception as e:
+            logging.error(f"Error in async runner: {e}")
+            returned[0] = True
+            error[0] = e
+    t = threading.Thread(target=runner)
+    t.start()
+    timeout_time = time.time() + timeout if timeout else None
+    if timeout_time is None:
+        while not returned[0]:
+            await asyncio.sleep(check_interval)
+    else:
+        while (not returned[0]) and (time.time() < timeout_time):
+            await asyncio.sleep(check_interval)
+    if not returned[0]:
+        raise TimeoutError()
+    if error[0] is not None:
+        raise error[0]
+    else:
+        return result[0]

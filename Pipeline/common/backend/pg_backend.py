@@ -1,15 +1,16 @@
-from typing import Tuple, Dict, Any, Optional, List, Set
+from typing import Tuple, Dict, Any, Optional, List, Set, Iterable, Callable
 from collections import OrderedDict, defaultdict
 import pyrogram.types
 from pyrogram.types import Message, User, Chat, ChatReactions, Reaction, Poll, PollOption, Dialog, ChatPreview, MessageEntity
 from pyrogram.enums import ChatType
 import sqlalchemy
-from sqlalchemy import Connection, create_engine, Table, Column, Integer, String, MetaData, DateTime, Float, Boolean, ForeignKey, Enum, Text, text, select, delete
+from sqlalchemy import Connection, create_engine, Table, Column, Integer, String, MetaData, DateTime, Float, Boolean, ForeignKey, Enum, Text, text, select, delete, func, outerjoin
 import pgvector
 import common.backend.models as models
 import threading
 import queue
 import logging
+import asyncio
 import time
 import datetime
 from common.consts import consts
@@ -158,6 +159,7 @@ def compose_insert_chat_dict_query(chat: Dict) -> Dict[str, Any]:
         chat_id=chat.get("id", None),
         title=chat.get("title", None),
         top_message_id=None,
+        next_top_message_id=None,
         first_name=chat.get("first_name", None),
         last_name=chat.get("last_name", None),
         username=chat.get("username", None),
@@ -196,71 +198,9 @@ def compose_insert_user_dict_query(chat: Dict) -> Dict[str, Any]:
     return chat_dict
 
 
-def perform_insert_dialog(cur, dialog: Dialog|Chat|ChatPreview, update_top_message_id: bool = False):
-    top_message_id = None
-    chat_type = None
-    if isinstance(dialog, Dialog):
-        chat: Chat = dialog.chat
-        top_message_id = dialog.top_message.id if dialog.top_message else None
-        chat_type = dialog.chat.type.value.lower()
-    elif isinstance(dialog, Chat):
-        chat: Chat = dialog
-    elif isinstance(dialog, ChatPreview):
-        chat: ChatPreview = dialog
-    elif isinstance(dialog, User):
-        chat: User = dialog
-        chat_type = (ChatType.PRIVATE if not chat.is_bot else ChatType.BOT).value.lower()
-    else:
-        raise ValueError(f"Incorrect dialog type: {type(dialog)}")
-    if chat is None:
-        return
-    chat_dict = dict(
-        chat_id = chat.id,
-        top_message_id = top_message_id,
-        title = getattr(chat, "title", None),
-        first_name = getattr(chat, "first_name", None),
-        last_name = getattr(chat, "last_name", None),
-        username = getattr(chat, "username", None),
-        invite_link = getattr(chat, "invite_link", None),
-        type = chat_type,
-        members_count = getattr(chat, "members_count", None),
-        is_verified = getattr(chat, "is_verified", None),
-        is_restricted = getattr(chat, "is_restricted", None),
-        is_scam = getattr(chat, "is_scam", None),
-        is_fake = getattr(chat, "is_fake", None),
-        is_support = getattr(chat, "is_support", None),
-        linked_chat_id = chat.linked_chat.id if getattr(chat, "linked_chat", None) else None,
-        phone_number = getattr(chat, "phone_number", None),
-    )
-    if "chat_id" not in chat_dict:
-        return
-    if not update_top_message_id:
-        chat_dict["top_message_id"] = None
-    if cur is not None:
-        perform_insert(
-            cur,
-            table_name=TableNames.CHATS,
-            values=chat_dict,
-            on_conflict_keys=["chat_id"],
-            on_conflict_update_keys="*",
-        )
-    return chat_dict
-
-
-def perform_update_top_message_id(cur, chat_id: int, top_message_id: int):
-    perform_insert(
-        cur,
-        table_name=TableNames.CHATS,
-        values=dict(
-            chat_id=chat_id,
-            top_message_id=top_message_id
-        ),
-        on_conflict_keys=["chat_id"],
-        on_conflict_update_keys=["top_message_id"],
-    )
-
-
 def get_reactions_list(message: Dict) -> Dict[int, int]:
+    if not EmojiMap.emoji_map:
+        EmojiMap._reload_map()
     reactions = message.get("reactions", None)
     i = 0
     if reactions is None:
@@ -436,7 +376,7 @@ class PostgresBackend(BaseBackendWithQueue):
     def is_connected(self):
         return (isinstance(self._conn, Connection) and self._conn.closed == 0)
     
-    def add_channel(self, dialog: Dialog|Chat|ChatPreview|List[Dialog|Chat|ChatPreview], update_top_message_id = True):
+    def add_channel(self, dialog: Dialog|Chat|ChatPreview|List[Dialog|Chat|ChatPreview]):
         dialog_list: List[Dialog|Chat|ChatPreview] = []
         if isinstance(dialog, (Dialog, Chat, ChatPreview)):
             dialog_list.append(dialog)
@@ -449,8 +389,6 @@ class PostgresBackend(BaseBackendWithQueue):
             if isinstance(dialog, Dialog):
                 chat: Chat = dialog.chat
                 d = compose_insert_chat_dict_query(clean_dict(chat))
-                if dialog.top_message and update_top_message_id:
-                    d["top_message_id"] = dialog.top_message.id
             elif isinstance(dialog, Chat):
                 chat: Chat = dialog
                 d = compose_insert_chat_dict_query(clean_dict(chat))
@@ -459,13 +397,112 @@ class PostgresBackend(BaseBackendWithQueue):
                 d = compose_insert_chat_dict_query(clean_dict(chat))
             else:
                 raise ValueError(f"Incorrect dialog type: {type(dialog)}")
-            if not update_top_message_id:
-                d["top_message_id"] = None
             dialog_query_list.append(d)
         with Session(self._engine) as sess:
             upsert(sess, models.Chats, dialog_query_list)
             sess.flush()
             sess.commit()
+    
+    def set_top_message_id_to_db_max(self, channel_id: int):
+        self.add_message(lambda: self._set_top_message_id_to_db_max(channel_id))
+    
+    def _set_top_message_id_to_db_max(self, channel_id: int):
+        #logging.info(f"Waiting for queue to flush once before setting {channel_id} top_message_id to max")
+        #await self.wait_for_queue_flush_batch()
+        with Session(self._engine) as sess:
+            stmt = (
+                select(func.max(models.Messages.message_id))
+                .where(models.Messages.chat_id == channel_id)
+            )
+            top_message_id = sess.execute(stmt).scalar()
+            if top_message_id is None:
+                return
+        self.set_top_message_id(channel_id, top_message_id, skip_check=True)
+    
+    def set_top_message_id(self, channel_id: int, top_message_id: int, skip_check: bool = False):
+        """
+        Announce that the DB contains all available messages in range [0, top_message_id]
+        """
+        with Session(self._engine) as sess:
+            if not skip_check:
+                # first, ensure that there are no messages with message_id > top_message_id
+                stmt = (
+                    sess.query(models.Messages)
+                    .filter(models.Messages.chat_id == channel_id)
+                    .filter(models.Messages.message_id > top_message_id)
+                    .limit(1)
+                )
+                rows = stmt.all()
+                if rows:
+                    row = rows[0]
+                    raise RuntimeError(f"Cannot set top_message_id to {top_message_id} for chat {channel_id}: there are messages with message_id > {top_message_id}, such as {row.message_id}")
+            # now we can insert
+            sess.execute(
+                insert(models.Chats)
+                .values(dict(chat_id=channel_id, top_message_id=top_message_id))
+                .on_conflict_do_update(
+                    index_elements=["chat_id"],
+                    set_=dict(top_message_id=top_message_id)
+                )
+            )
+            sess.flush()
+            sess.commit()
+
+    def set_ongoing_write(self, channel_id: int, ongoing_write: bool):
+        with Session(self._engine) as sess:
+            sess.execute(
+                insert(models.Chats)
+                .values(dict(chat_id=channel_id, ongoing_write=ongoing_write))
+                .on_conflict_do_update(
+                    index_elements=["chat_id"],
+                    set_=dict(ongoing_write=ongoing_write)
+                )
+            )
+            sess.flush()
+            sess.commit()
+
+    def get_offsets_from_ongoing_writes_reactions(self) -> Dict[int, Optional[int]]:
+        with Session(self._engine) as sess:
+            stmt = (
+                select(
+                    models.Chats.chat_id, 
+                    select(func.min(models.Reactions.message_id))
+                        .where(models.Reactions.chat_id == models.Chats.chat_id)
+                        .where(
+                            (models.Chats.top_message_id.is_(None))
+                            | (models.Reactions.message_id > models.Chats.top_message_id)
+                        )
+                        .label("min_message_id")
+                )
+                .select_from(models.Chats)
+                # ongoing_write is just an indicator - not actually necessary for correctness
+                # was originally here for performance, but turns out it's not necessary for that either
+                #.where(models.Chats.ongoing_write == True)
+            )
+            rows = {row[0]: row[1] for row in sess.execute(stmt).fetchall() if row[1] is not None}
+        return rows
+
+    def get_offsets_from_ongoing_writes(self) -> Dict[int, Optional[int]]:
+        with Session(self._engine) as sess:
+            stmt = (
+                select(
+                    models.Chats.chat_id, 
+                    select(func.min(models.Messages.message_id))
+                        .where(models.Messages.chat_id == models.Chats.chat_id)
+                        .where(
+                            (models.Chats.top_message_id.is_(None))
+                            | (models.Messages.message_id > models.Chats.top_message_id)
+                        )
+                        .label("min_message_id")
+                )
+                .select_from(models.Chats)
+                # ongoing_write is just an indicator - not actually necessary for correctness
+                # was originally here for performance, but turns out it's not necessary for that either
+                #.where(models.Chats.ongoing_write == True)
+            )
+            rows = {row[0]: row[1] for row in sess.execute(stmt).fetchall() if row[1] is not None}
+        return rows
+
     
     def delete_messages(self, channel_id: int, id_min: int, id_max: int):
         assert id_min <= id_max
@@ -508,14 +545,23 @@ class PostgresBackend(BaseBackendWithQueue):
         with Session(self._engine) as sess:
             self._known_chats |= {c.sender_id for c in sess.query(models.Users.chat_id).all()}
         return d
+    
+    def get_chats_with_reactions_bak(self) -> Set[int]:
+        cur = self._conn.connection.cursor()
+        cur.execute(f"SELECT DISTINCT chat_id FROM reactions_bak")
+        d = set()
+        for row in cur.fetchall():
+            d.add(row[0])
+        cur.close()
+        return d
 
     def get_stored_dialogs_committed(self) -> Dict[int, StoredDialog]:
         # Return: d[channel_id] = (channel_name, max_message_id)
         cur = self._conn.connection.cursor()
-        cur.execute(f"SELECT chat_id, title, top_message_id FROM {TableNames.CHATS}")
+        cur.execute(f"SELECT chat_id, title, top_message_id, username, invite_link FROM {TableNames.CHATS}")
         d = dict()
         for row in cur.fetchall():
-            d[row[0]] = StoredDialog(title=row[1], max_id=row[2])
+            d[row[0]] = StoredDialog(title=row[1], max_id=row[2], username=row[3], invite_link=row[4])
             #assert d[row[0]].max_id is not None
         cur.close()
         self._stored_dialogs = d
@@ -554,7 +600,7 @@ class PostgresBackend(BaseBackendWithQueue):
         self._schema = schema
         return schema
 
-    def execute_query(self, query: str, *, timeout: int = None, limit: int = 10) -> List[Tuple[Any]]:
+    def execute_query(self, query: str, *, limit: int = 10) -> List[Tuple[Any]]:
         conn = self.new_connection()
         cur = conn.connection.cursor()
         try:
@@ -578,9 +624,11 @@ class PostgresBackend(BaseBackendWithQueue):
         cur.close()
         return n
 
-    def add_messages(self, messages: Message):
+    def add_messages(self, messages: Iterable[Message|Callable]):
         if not messages:
             return
+        callables = [m for m in messages if not isinstance(m, Message)] # can use callable() too I guess
+        messages = [m for m in messages if isinstance(m, Message)]
         items_messages, items_reactions, items_polls, items_chats, items_users = [], [], [], [], []
         for i in range(len(messages)):
             normalized = compose_insert_message_query(messages[i])
@@ -614,3 +662,6 @@ class PostgresBackend(BaseBackendWithQueue):
         self._known_chats |= new_chats
         if update_count:
             logging.info(f"Inserted {update_count} items, of which: {update_count_messages} messages, {update_count_reactions} reactions, {update_count_polls} polls, {update_count_chats} chats")
+        for c in callables:
+            c()
+        logging.info(f"Called {len(callables)} callables")

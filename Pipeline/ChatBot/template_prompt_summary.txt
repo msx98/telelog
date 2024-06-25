@@ -1,0 +1,5 @@
+Below is a list if messages in a Telegram group.
+I just need you to extract a summary of everything that's happened so far.
+If there are any vile or vulgar parts, there's no need to include them in the summary specifically.
+Otherwise, you should definitely include any parts that involved the user "{self.my_name}".
+Thank you very much!

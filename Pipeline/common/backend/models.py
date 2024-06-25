@@ -1,5 +1,6 @@
+from typing import Dict
 from enum import Enum
-from sqlalchemy import Column, Integer, String, Boolean, BigInteger, Float, Text, DateTime, CheckConstraint, PickleType, text, select, update, insert, PrimaryKeyConstraint, func
+from sqlalchemy import Column, Integer, String, Boolean, BigInteger, Float, Text, DateTime, CheckConstraint, PickleType, text, select, update, insert, PrimaryKeyConstraint, func, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ENUM, ARRAY
 from sqlalchemy.ext.declarative import declarative_base
 from pgvector.sqlalchemy import Vector
@@ -28,6 +29,18 @@ chat_type_enum = ENUM(
     name='chat_type'
 )
 
+granularity_type_enum = ENUM(
+    '1m',
+    '2m',
+    '5m',
+    '15m',
+    '30m',
+    '60m',
+    '90m',
+    '1d',
+    name='granularity_type'
+)
+
 class ChatType(Enum):
     private = 'private'
     bot = 'bot'
@@ -39,6 +52,8 @@ class Chats(Base):
     __tablename__ = 'chats'
     chat_id = Column(BigInteger, nullable=False, primary_key=True)
     top_message_id = Column(BigInteger)
+    #next_top_message_id = Column(BigInteger, CheckConstraint('next_top_message_id is null or top_message_id is null or next_top_message_id >= top_message_id'))
+    #ongoing_write = Column(Boolean)
     title = Column(Text)
     first_name = Column(Text)
     last_name = Column(Text)
@@ -141,3 +156,186 @@ class EmojiMap(Base):
     reaction_id = Column(Integer, primary_key=True, unique=True, autoincrement=True)
     reaction = Column(String, nullable=False, unique=True)
     is_custom = Column(Boolean, nullable=False)
+
+
+class StocksMeta(Base):
+    __tablename__ = 'stocks_meta'
+    symbol_id = Column(Integer, primary_key=True, autoincrement=True, unique=True)
+    symbol = Column(String, primary_key=True, unique=True)
+    name = Column(String)
+    sector = Column(String)
+    industry = Column(String)
+    country = Column(String)
+    market_cap = Column(Float)
+    pe_ratio = Column(Float)
+    eps = Column(Float)
+    dividend_yield = Column(Float)
+    beta = Column(Float)
+    __table_args__ = (
+        CheckConstraint('market_cap >= 0'),
+        CheckConstraint('pe_ratio >= 0'),
+        CheckConstraint('eps >= 0'),
+        CheckConstraint('dividend_yield >= 0'),
+        CheckConstraint('beta >= 0'),
+    )
+
+
+class Stocks(Base):
+    __tablename__ = "stocks"
+    symbol = Column(String)
+    granularity = Column(granularity_type_enum)
+    date = Column(DateTime)
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(Float)
+    adj_close = Column(Float)
+    __table_args__ = (
+        PrimaryKeyConstraint('symbol', 'granularity', 'date'),
+        CheckConstraint('open >= 0'),
+        CheckConstraint('high >= 0'),
+        CheckConstraint('low >= 0'),
+        CheckConstraint('close >= 0'),
+        CheckConstraint('volume >= 0'),
+        CheckConstraint('adj_close >= 0'),
+    )
+
+
+class StocksBase(Base):
+    __abstract__ = True
+    symbol = Column(String)
+    date = Column(DateTime)
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(Float)
+    adj_close = Column(Float)
+    __table_args__ = (
+        PrimaryKeyConstraint('symbol', 'date'),
+        #UniqueConstraint('symbol', 'date'),
+        CheckConstraint('open >= 0'),
+        CheckConstraint('high >= 0'),
+        CheckConstraint('low >= 0'),
+        CheckConstraint('close >= 0'),
+        CheckConstraint('volume >= 0'),
+        CheckConstraint('adj_close >= 0'),
+    )
+
+
+class StocksGran1m(StocksBase):
+    __tablename__ = 'stocks_1m'
+
+
+class StocksGran2m(StocksBase):
+    __tablename__ = 'stocks_2m'
+
+
+class StocksGran5m(StocksBase):
+    __tablename__ = 'stocks_5m'
+
+
+class StocksGran15m(StocksBase):
+    __tablename__ = 'stocks_15m'
+
+
+class StocksGran30m(StocksBase):
+    __tablename__ = 'stocks_30m'
+
+
+class StocksGran60m(StocksBase):
+    __tablename__ = 'stocks_60m'
+
+
+class StocksGran90m(StocksBase):
+    __tablename__ = 'stocks_90m'
+
+
+class StocksGran1d(StocksBase):
+    __tablename__ = 'stocks_1d'
+
+
+StocksGran: Dict[str, StocksBase] = {
+    "1m": StocksGran1m,
+    "2m": StocksGran2m,
+    "5m": StocksGran5m,
+    "15m": StocksGran15m,
+    "30m": StocksGran30m,
+    "60m": StocksGran60m,
+    "90m": StocksGran90m,
+    "1d": StocksGran1d,
+}
+
+
+class StocksUnpartNosym(Base):
+    __tablename__ = 'stocks_unpart_nosym'
+    #symbol_id = Column(Integer, primary_key=True)
+    date = Column(DateTime, primary_key=True)
+    yyyymm = Column(Integer)
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(Float)
+    adj_close = Column(Float)
+    __table_args__ = (
+        PrimaryKeyConstraint('date'),
+        UniqueConstraint('date'),
+        CheckConstraint('yyyymm >= 180001 AND yyyymm <= 999912'),
+        CheckConstraint('open >= 0'),
+        CheckConstraint('high >= 0'),
+        CheckConstraint('low >= 0'),
+        CheckConstraint('close >= 0'),
+        CheckConstraint('volume >= 0'),
+        CheckConstraint('adj_close >= 0'),
+    )
+
+
+class StocksUnpartStr(Base):
+    __tablename__ = 'stocks_unpart_str'
+    #symbol_id = Column(Integer, primary_key=True)
+    symbol = Column(String)
+    date = Column(DateTime)
+    yyyymm = Column(Integer)
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(Float)
+    adj_close = Column(Float)
+    __table_args__ = (
+        PrimaryKeyConstraint('symbol', 'date'),
+        UniqueConstraint('symbol', 'date'),
+        CheckConstraint('yyyymm >= 180001 AND yyyymm <= 999912'),
+        CheckConstraint('open >= 0'),
+        CheckConstraint('high >= 0'),
+        CheckConstraint('low >= 0'),
+        CheckConstraint('close >= 0'),
+        CheckConstraint('volume >= 0'),
+        CheckConstraint('adj_close >= 0'),
+    )
+
+
+class StocksUnpart(Base):
+    __tablename__ = 'stocks_unpart'
+    symbol_id = Column(Integer)
+    date = Column(DateTime)
+    yyyymm = Column(Integer)
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(Float)
+    adj_close = Column(Float)
+    __table_args__ = (
+        PrimaryKeyConstraint('symbol_id', 'date'),
+        UniqueConstraint('symbol_id', 'date'),
+        CheckConstraint('yyyymm >= 180001 AND yyyymm <= 999912'),
+        CheckConstraint('open >= 0'),
+        CheckConstraint('high >= 0'),
+        CheckConstraint('low >= 0'),
+        CheckConstraint('close >= 0'),
+        CheckConstraint('volume >= 0'),
+        CheckConstraint('adj_close >= 0'),
+    )

@@ -30,7 +30,7 @@ services:
     ports:
       # <Port exposed> : <MySQL Port running inside container>
       #- "127.0.0.1:3306:3306"
-      - "5432:5432"
+      - "5200:5432"
       #- "172.69.128.2:3307:3306"
     volumes:
       - ./MessageStore/pgdata:/var/lib/postgresql/data
@@ -54,13 +54,113 @@ services:
       sqlnet:
         ipv4_address: 172.69.128.3
   
-  message-fetch:
+  stocks:
+    build:
+      context: .
+      dockerfile: Dockerfile.StocksFetch
+    restart: always
+    env_file:
+      - path: ./.env
+        required: true
+      - path: ./.stocks.env
+        required: true
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.19
+    volumes:
+      - ./MessageStore/stockdata:/stockdata
+
+  chatbot:
+    build:
+      context: .
+      dockerfile: Dockerfile.ChatBot
+    restart: always
+    volumes:
+      - ./downloads:/downloads
+    env_file:
+      - path: ./.env
+        required: true
+      - path: ./.telegram.env
+        required: true
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.10
+
+  fetch:
+    build:
+      context: .
+      dockerfile: Dockerfile.MessageFetchMulti
+    restart: always
+    env_file:
+      - path: ./.env
+        required: true
+      - path: ./.telegram.env
+        required: true
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.11
+
+  multi:
+    build:
+      context: .
+      dockerfile: Dockerfile.MessageFetchMulti
+    restart: always
+    env_file:
+      - path: ./.env
+        required: true
+      - path: ./.telegram.env
+        required: true
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.18
+
+  refresh:
+    build:
+      context: .
+      dockerfile: Dockerfile.MessageRefresh
+    restart: always
+    env_file:
+      - path: ./.env
+        required: true
+      - path: ./.telegram.env
+        required: true
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.16
+
+  updatelinks:
+    build:
+      context: .
+      dockerfile: Dockerfile.UpdateLinks
+    restart: always
+    env_file:
+      - path: ./.env
+        required: true
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.13
+
+  embed:
+    build:
+      context: .
+      dockerfile: Dockerfile.MessageEmbed
+    restart: always
+    env_file:
+      - path: ./.env
+        required: true
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.12
+  
+  message-fetch-old:
     build:
       context: ./MessageFetch
       dockerfile: Dockerfile
     restart: always
     environment:
       IS_DOCKER: true
+      RUN_FILENAME: "fetch_channel_history.py"
+      RUN_MAIN_NOHUP: false
     env_file:
       - path: ./.env
         required: true
@@ -70,10 +170,61 @@ services:
       sqlnet:
         ipv4_address: 172.69.128.2
     healthcheck:
-      test: ["CMD", "python", "/app/mysql_healthcheck.py"]
+      test: ["CMD", "python", "/app/healthcheck.py"]
       interval: 60s
       timeout: 30s
       retries: 3
+
+  message-fetch-groups:
+    build:
+      context: ./MessageFetch
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      IS_DOCKER: true
+      RUN_FILENAME: "main.py"
+    env_file:
+      - path: ./.env
+        required: true
+    volumes:
+      - ./MessageFetch/app:/app
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.6
+
+  embed-messages:
+    build:
+      context: ./MessageFetch
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      IS_DOCKER: true
+      RUN_FILENAME: "create_message_embeddings_pg.py"
+      RUN_MAIN_NOHUP: false
+    env_file:
+      - path: ./.env
+        required: true
+    volumes:
+      - ./MessageFetch/app:/app
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.7
+
+  hue:
+    build:
+      context: ./MessageStore/
+      dockerfile: hue.Dockerfile
+    hostname: hue
+    container_name: hue
+    #dns: 8.8.8.8
+    ports:
+      - "2222:8888"
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.5
+    volumes:
+      #- ./MessageStore/hue.ini:/usr/share/hue/desktop/conf/z-hue.ini
+      - ./MessageStore/hue.ini:/usr/share/hue/desktop/conf/hue-overrides.ini
 
 networks:
   sqlnet:

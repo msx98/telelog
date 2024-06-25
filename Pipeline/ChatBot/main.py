@@ -1,42 +1,42 @@
 #!/usr/bin/env python3
 
+from dotenv import dotenv_values
+import os
+config = dotenv_values(".env") | dotenv_values(".telegram.env")
+os.environ.update(config)
+
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from common.backend.pg_backend import PostgresBackend
+import threading
+import asyncio
 from common.backend.config import Config
 import datetime
 import asyncio
 import threading
+import time
 from common.consts import *
-from collections import defaultdict
+from collections import defaultdict, deque
 import signal
 import sys
 import os
-from common.utils import load_embedding_model, load_pyrogram_session
+from common.utils import load_embedding_model, load_pyrogram_session, run_async
 import logging
+from sqlalchemy.orm import Session
+from sqlalchemy import Column
+from pyrogram import Client, idle
+from group_chat_manager import group_chats, GroupChatManager
+logging.basicConfig(level=logging.INFO)
 
 
-model = None
-
-
-print("Connecting to DB")
+logging.info("Connecting to DB")
 db = PostgresBackend()
 config = Config()
 
 
-print("Connecting to account")
-app = load_pyrogram_session(config, default_session_string=consts["TELEGRAM_SESSION_STRING_MAIN"])
-
-
-print("Defining handlers")
-
-
-def signal_handler(sig, frame):
-	print("Closing DB")
-	db.close()
-	print("Closing account")
-	app.stop()
-	sys.exit(0)
+logging.info("Connecting to account")
+app = load_pyrogram_session(os.environ["TELEGRAM_CHATBOT_WITH"])
+logging.info("Got app")
 
 
 known_cmds = []
@@ -46,6 +46,7 @@ history = defaultdict(lambda: [])
 def on_cmd(command_name, **kwargs):
 	require_auth = kwargs.get("require_auth", True)
 	description = kwargs.get("description", None)
+	start_msg = kwargs.get("start_msg", None)
 	global known_cmds
 	known_cmds.append((command_name, description))
 	def decorator(func):
@@ -61,16 +62,21 @@ def on_cmd(command_name, **kwargs):
 				return
 			text_start = message.text.find(" ")
 			text = "" if text_start == -1 else message.text[text_start+1:]
+			text = text.replace("“", "\"").replace("”", "\"").replace("‘", "'")
 			history[message.from_user.id].append(message)
-			result_text = await func(bot, message, text)
+			response_msg = await bot.send_message(chat_id=message.chat.id, text=start_msg) if start_msg else None
+			result_text = await func(bot, message, response_msg, text)
 			assert (result_text and isinstance(result_text, (str, Message))) or result_text is None
 			if isinstance(result_text, str):
 				print(f"Sending: {result_text}")
-				await bot.send_message(
-					chat_id=message.chat.id,
-					text=result_text,
-					reply_to_message_id=message.id
-				)
+				if response_msg:
+					await response_msg.edit_text(result_text)
+				else:
+					await bot.send_message(
+						chat_id=message.chat.id,
+						text=result_text,
+						reply_to_message_id=message.id
+					)
 		return wrapper
 	return decorator
 
@@ -83,7 +89,7 @@ async def handle_disconnect(bot):
 
 
 @on_cmd("authorize", require_auth=False)
-async def handle_authorize_command(bot, message, text):
+async def handle_authorize_command(bot, message, response_msg, text):
 	password = os.environ["TELEGRAM_AUTH_CMD_PASS"]
 	if db.is_admin(message.from_user.id):
 		return "You are already authorized"
@@ -95,28 +101,47 @@ async def handle_authorize_command(bot, message, text):
 		print(f"Failed authorization attempt from {message.from_user.id} ({message.from_user.username})")
 
 
-@on_cmd("sql")
-async def handle_sql_command(bot, message, query):
-	res = db.execute_query(query) or ["No results"]
-	return "\n".join([str(row) for row in res])
+async def do_sql(q):
+    result = [None]
+    returned = [False]
+    def doer():
+        if isinstance(q, str):
+            result[0] = db.execute_query(q) or ["NO RESULTS"]
+        else:
+            result[0] = db._conn.execute(q).fetchall()
+        returned[0] = True
+    t = threading.Thread(target=doer)
+    t.start()
+    while not returned[0]:
+        await asyncio.sleep(1)
+    return result[0]
 
 
-@on_cmd("sql_nolimit")
-async def handle_sql_long_command(bot, message, query):
-	res = db.execute_query(query, limit=None) or ["No results"]
-	return "\n".join([str(row) for row in res])
+@on_cmd("sql", start_msg="Please wait...")
+async def handle_sql_command(bot, message, response_msg, query):
+    if query.lower().startswith("nolimit "):
+        timeout, limit, query = None, None, query[len("nolimit "):]
+    else:
+        timeout, limit = 30, 10
+    try:
+        res = await run_async(lambda: db.execute_query(query, limit=limit), timeout=timeout)
+        return "\n".join([str(row) for row in res])
+    except TimeoutError:
+        return "Query timed out"
+    except Exception as e:
+        return f"Unknown error occurred while executing query: {str(e)}"
 
 
-@on_cmd("count")
-async def handle_count_command(bot, message, text):
-	n, date = db.count_messages()
+@on_cmd("count", start_msg="Please wait...")
+async def handle_count_command(bot, message, response_msg, text):
+	n, date = await run_async(lambda: db.count_messages())
 	fetched_diff = (datetime.datetime.now() - date).total_seconds()
 	return f"Total messages: {n}, last fetched {fetched_diff} seconds ago"
 
 
 @on_cmd("schema")
-async def handle_schema_command(bot, message, text):
-	res = db.schema
+async def handle_schema_command(bot, message, response_msg, text):
+	res = await run_async(lambda: db.schema)
 	s = ""
 	for table, rows in res.items():
 		rows_s = ", ".join(rows)
@@ -125,25 +150,25 @@ async def handle_schema_command(bot, message, text):
 
 
 @on_cmd("test_insert_message")
-async def handle_test_insert_message_command(bot, message, text):
+async def handle_test_insert_message_command(bot, message, response_msg, text):
 	db.add_message(message)
 	return "Message added"
 
 
 @on_cmd("id")
-async def handle_id_command(bot, message, text):
+async def handle_id_command(bot, message, response_msg, text):
 	return str(message.from_user.id)
 
 
 @on_cmd("check")
-async def handle_check_command(bot, message, text):
+async def handle_check_command(bot, message, response_msg, text):
 	reply = message.reply_to_message
 	if not reply:
 		return "Please mark a message to check by replying to it"
 	return str(reply)
 
 @on_cmd("search", description="params: textcos/textlike, chat_id/chatname, after, before, limit")
-async def handle_sql_embed_prev_command(bot, message, text):
+async def handle_sql_embed_prev_command(bot, message, response_msg, text):
 	lines = [line.strip() for line in text.split(";;;") if line.strip()]
 	params = dict()
 	for line in lines:
@@ -195,13 +220,10 @@ async def handle_sql_embed_prev_command(bot, message, text):
 		return
 	try:
 		print("Submitting")
-		async def execute(msg):
-			await msg.edit_text("Working...")
-			results = db._conn.execute(query).fetchall()
-			result_str = "\n".join([str(row) for row in results])
-			await msg.edit_text(result_str)
-		threading.Thread(target=lambda m: asyncio.run(execute(m)), args=(msg,)).start()
-		return
+		await msg.edit_text("Working...")
+		results = await do_sql(query)
+		result_str = "\n".join([str(row) for row in results])
+		await msg.edit_text(result_str)
 	except Exception as e:
 		print(f"Error executing query: {e}, query: {query}")
 		result_str = f"Error: {e}"
@@ -209,7 +231,7 @@ async def handle_sql_embed_prev_command(bot, message, text):
 
 
 @on_cmd("test")
-async def handle_test_command(bot, message, text):
+async def handle_test_command(bot, message, response_msg, text):
 	msg = await bot.send_message(chat_id=message.chat.id, text="Test message")
 	import threading
 	import time
@@ -224,7 +246,7 @@ async def handle_test_command(bot, message, text):
 
 
 @on_cmd("confset")
-async def handle_confset_command(bot, message, text):
+async def handle_confset_command(bot, message, response_msg, text):
 	param_name = text.split(" ", 1)[0]
 	param_value = text.split(" ", 1)[1]
 	if not param_name or not param_value:
@@ -234,7 +256,7 @@ async def handle_confset_command(bot, message, text):
 
 
 @on_cmd("confget")
-async def handle_confget_command(bot, message, text):
+async def handle_confget_command(bot, message, response_msg, text):
 	if text:
 		return f"{text}: {config.get(text)}"
 	else:
@@ -242,7 +264,7 @@ async def handle_confget_command(bot, message, text):
 
 
 @on_cmd("add_channel", description="params: chat_id; add channels to embed_chat_list")
-async def handle_add_channel_command(bot, message, text):
+async def handle_add_channel_command(bot, message, response_msg, text):
 	if not text:
 		return "Please provide a chat_id"
 	channels = config.get("embed_chat_list", [])
@@ -252,7 +274,7 @@ async def handle_add_channel_command(bot, message, text):
 
 
 @on_cmd("remove_channel")
-async def handle_remove_channel_command(bot, message, text):
+async def handle_remove_channel_command(bot, message, response_msg, text):
 	if not text:
 		return "Please provide a chat_id"
 	channels = config.get("embed_chat_list", [])
@@ -262,7 +284,7 @@ async def handle_remove_channel_command(bot, message, text):
 
 
 @on_cmd("download", description="params: upload? url {audio,video}?; download from youtube/pinterest/twitter")
-async def handle_download_command(bot, message, text):
+async def handle_download_command(bot, message, response_msg, text):
 	params = text.split(" ", 1)
 	print(f"Params: {params}")
 	force_upload = (len(params) > 1) and (params[0] == "upload")
@@ -295,11 +317,14 @@ async def handle_download_command(bot, message, text):
 			opts.pop("postprocessors")
 		msg = await bot.send_message(chat_id=message.chat.id, reply_to_message_id=message.id, text="Downloading...")
 		try:
-			with YoutubeDL(opts) as ydl:
-				info_dict = ydl.extract_info(url, download=True)
-				video_id = info_dict.get('id', None)
-				video_ext = info_dict.get('ext', None)
-				filename = f"{filename_location}/{video_id}.{video_ext}"
+			def downloader():
+				with YoutubeDL(opts) as ydl:
+					info_dict = ydl.extract_info(url, download=True)
+					video_id = info_dict.get('id', None)
+					video_ext = info_dict.get('ext', None)
+					filename = f"{filename_location}/{video_id}.{video_ext}"
+				return filename
+			filename = await run_async(downloader)
 			await msg.edit_text(f"https://{os.environ['POSTGRES_HOST_EXTERNAL']}{filename}")
 			if force_upload:
 				await bot.send_document(chat_id=message.chat.id, reply_to_message_id=message.id, document=filename)
@@ -315,7 +340,7 @@ async def handle_download_command(bot, message, text):
 		image_info = extract_image(url)
 		if image_info:
 			image_url, _ = image_info
-			full_path = download_image(f"/downloads/pinterest", image_url, str(uuid.uuid4()))
+			full_path = run_async(lambda: download_image(f"/downloads/pinterest", image_url, str(uuid.uuid4())))
 			if force_upload:
 				await bot.send_document(chat_id=message.chat.id, reply_to_message_id=message.id, document=full_path)
 			return f"https://{os.environ['POSTGRES_HOST_EXTERNAL']}{full_path}"
@@ -328,13 +353,13 @@ async def handle_download_command(bot, message, text):
 
 
 @on_cmd("health")
-async def handle_health_command(bot, message, text):
+async def handle_health_command(bot, message, response_msg, text):
 	from sqlalchemy import select
 	from sqlalchemy.orm import aliased
 	import common.backend.models as models
 	from sqlalchemy import func
 	query = select(func.max(models.Messages.date)).select_from(models.Messages).limit(1)
-	last_message = db._conn.execute(query).fetchone()
+	last_message = await run_async(lambda: db._conn.execute(query).fetchone())
 	if last_message is None:
 		return "No messages in DB"
 	last_message_date = last_message[0]
@@ -343,7 +368,7 @@ async def handle_health_command(bot, message, text):
 
 
 @on_cmd("help")
-async def handle_help_command(bot, message, text):
+async def handle_help_command(bot, message, response_msg, text):
 	s = "Known commands:\n"
 	for cmd in known_cmds:
 		cmd_name, cmd_description = cmd
@@ -351,9 +376,50 @@ async def handle_help_command(bot, message, text):
 	return s
 
 
-print("Adding signal handlers")
-signal.signal(signal.SIGINT, signal_handler)
+@app.on_message(filters.all)
+async def handle_group_message(bot, message):
+	#logging.info(f"Got message in {message.chat.id}")
+	if message.chat.id not in group_chats:
+		return
+	if GroupChatManager.bot_me is None:
+		GroupChatManager.bot_me = await app.get_me()
+	logging.info("Got message in active group")
+	should_summarize = group_chats[message.chat.id].add_message(message)
+	if should_summarize:
+		logging.info("Processing message")
+		try:
+			msg, reply_to = await group_chats[message.chat.id].get_response()
+		except Exception as e:
+			logging.error(f"Error in processing: {e}")
+			msg, reply_to = None, None
+		logging.info(f"Summary: {msg}")
+		if msg:
+			await bot.send_message(chat_id=message.chat.id, text=msg, reply_to_message_id=reply_to)
+	else:
+		logging.info("Not summarizing")
 
 
-print("Launching app")
-app.run()
+async def main():
+	await app.start()
+	GroupChatManager.bot_me = await app.get_me()
+	logging.info(f"App started as {GroupChatManager.bot_me.first_name} {GroupChatManager.bot_me.last_name} ({GroupChatManager.bot_me.username})")
+	logging.info(f"App idling")
+	await idle()
+	logging.info("App stopping")
+	await app.stop()
+
+
+if __name__ == "__main__":
+	logging.info("Entered main prep")
+	def signal_handler(sig, frame):
+		print("Closing DB")
+		db.close()
+		print("Closing account")
+		app.stop()
+		sys.exit(0)
+	logging.info("Setting signal handlers")
+	signal.signal(signal.SIGINT, signal_handler)
+	signal.signal(signal.SIGTERM, signal_handler)
+	logging.info("Starting main")
+	#asyncio.run(main())
+	app.run()

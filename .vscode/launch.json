@@ -9,7 +9,14 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${file}",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "PYTHONPATH": "${workspaceFolder}/Pipeline",
+                "POSTGRES_HOST_OVERRIDE": "127.0.0.1",
+		        "POSTGRES_PORT_OVERRIDE": "5200",
+                "STOCK_DATA_PATH_OVERRIDE": "${workspaceFolder}/MessageStore/stockdata",
+            }
         }
     ]
 }

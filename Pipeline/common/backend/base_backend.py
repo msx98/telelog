@@ -1,4 +1,4 @@
-from typing import Dict, List, Iterable, Any
+from typing import Dict, List, Iterable, Any, Callable, Optional
 from enum import Enum
 import queue
 import threading
@@ -11,8 +11,10 @@ import pyrogram.client
 import json
 from common.consts import consts
 from common.backend.config import Config
-from collections import namedtuple
-StoredDialog = namedtuple("Dialog", ["title", "max_id"])
+from collections import namedtuple, deque
+import asyncio
+import logging
+StoredDialog = namedtuple("Dialog", ["title", "max_id", "username", "invite_link"])
 
 
 chat_type_dict = {
@@ -118,18 +120,18 @@ class BaseBackend(abc.ABC):
         return (channel_id, channel_name, id_start-id_end+1)
 
     def close(self):
-        print("db.close() - start")
+        print("BaseBackend.close() - start")
         if not hasattr(self, "_conn"):
             raise NotImplementedError()
         if not hasattr(self._conn, "close"):
             raise NotImplementedError()
         if self._conn:
-            print(f"db.close() - closing connection")
+            print(f"BaseBackend.close() - closing connection")
             self._conn.close()
             self._conn = None
         else:
-            print(f"db.close() - connection already closed")
-        print("db.close() - end")
+            print(f"BaseBackend.close() - connection already closed")
+        print("BaseBackend.close() - end")
     
     def add_admin(self, user_id: int):
         admins = self._config.get("admins", "")
@@ -146,15 +148,15 @@ class BaseBackend(abc.ABC):
         raise NotImplementedError()
 
     @abc.abstractmethod
-    def add_message(self, message: Message):
+    def add_message(self, message: Message|Callable):
         raise NotImplementedError()
     
     @abc.abstractmethod
-    def add_channel(self, dialog: Dialog, update_top_message_id: bool):
+    def add_channel(self, dialog: Dialog):
         raise NotImplementedError()
     
     @abc.abstractmethod
-    def add_messages(self, messages: Iterable[Message]):
+    def add_messages(self, messages: Iterable[Message|Callable]):
         raise NotImplementedError()
 
     @abc.abstractmethod
@@ -187,57 +189,139 @@ class BaseBackend(abc.ABC):
 
 
 class MessageQueue:
-    def __init__(self, db: BaseBackend, lock: threading.Lock, max_queue_size: int):
+    def __init__(
+            self,
+            db: BaseBackend,
+            lock: threading.Lock,
+            *,
+            batch_fill_timeout: float,
+            batch_size: int,
+    ):
         self.db = db
-        self.max_queue_size = max_queue_size
-        self.queue = queue.Queue()
+        self.max_queue_size = 10 * batch_size
+        self.batch_size = batch_size
+        self.batch_fill_timeout = batch_fill_timeout
+        self.queue: deque = deque(maxlen=self.max_queue_size)
         self.lock = lock
+        self.quick_lock = threading.Lock()
         self.last_push = time.time()
+        self.last_count = 0
+        self.messages: List[Optional[Message|Callable]] = [None for _ in range(batch_size)]
         self.stopped = False
-        self.thread = threading.Thread(target=self.run)
+        self.thread = threading.Thread(target=self._loop)
+        self.start()
+
+    def add_message(self, message: Message|Callable):
+        if self.stopped:
+            raise Exception("MessageQueue is stopped")
+        self.queue.append(message)
+
+    def start(self):
         self.thread.start()
 
-    def add_message(self, message):
-        # Don't add to queue while queue is being processed
-        with self.lock:
-            self.queue.put(message)
-
-    def run(self):
-        while not self.stopped:
-            if self.queue.qsize() >= self.max_queue_size or time.time() - self.last_push > 5:
-                #print(f"Reached condition - gonna wait for lock")
-                with self.lock:
-                    messages = [self.queue.get() for _ in range(self.queue.qsize())]
-                    #print(f"Pushing {len(messages)} messages to DB")
-                    self.db.add_messages(messages)
-                    self.last_push = time.time()
-            time.sleep(1)
-
     def stop(self):
+        logging.info(f"MessageQueue.stop() - changing stopped to True")
         self.stopped = True
+        logging.info(f"MessageQueue.stop() - waiting for thread to join")
         self.thread.join()
+        logging.info(f"MessageQueue.stop() - thread joined - done")
+
+    def _loop(self):
+        i = 0
+        while not self.stopped:
+            i = 0
+            #logging.info("Going for another batch")
+            next_force_push = time.time() + self.batch_fill_timeout
+            while i < self.batch_size:
+                try:
+                    self.messages[i] = self.queue.popleft()
+                    i += 1
+                except IndexError:
+                    if time.time() > next_force_push:
+                        break
+                    #logging.info("Got index error, sleeping")
+                    time.sleep(1)
+            if i:
+                #logging.info("Calling self.db.add_messages")
+                self.db.add_messages(self.messages[:i])
+            #logging.info("Obtaining lock")
+            with self.quick_lock:
+                self.last_push = time.time()
+                self.last_count = i
 
 
 class BaseBackendWithQueue(BaseBackend):
     _queue: MessageQueue
     _lock: threading.Lock
 
-    def __init__(self, name: str, **kwargs):
+    def __init__(self, name: str, *, batch_fill_timeout: float = 1, batch_size: int = 10000, **kwargs):
         super().__init__(name, **kwargs)
         self._lock = threading.Lock()
         if kwargs.get("debug_read_only", None) is True:
             self._queue = None
         else:
-            self._queue = MessageQueue(self, self._lock, kwargs.get("max_queue_size", 10))
+            self._queue = MessageQueue(
+                self,
+                self._lock,
+                batch_fill_timeout = batch_fill_timeout,
+                batch_size = batch_size,
+            )
     
     @property
     def lock(self):
         return self._lock
     
     def close(self):
+        logging.info(f"BaseBackendWithQueue.close() - waiting for lock")
         with self._lock:
+            logging.info(f"BaseBackendWithQueue.close() - got lock, stopping queue")
             self._queue.stop()
+            logging.info(f"BaseBackendWithQueue.close() - stopped queue, waiting for queue to flush batches")
+            self.wait_for_queue_flush_full_sync()
+            logging.info(f"BaseBackendWithQueue.close() - stopped queue, calling super().close()")
             super().close()
+        logging.info(f"BaseBackendWithQueue.close() - end")
+    
+    def __del__(self):
+        logging.info(f"BaseBackendWithQueue.__del__() - start")
+        try:
+            self.close()
+        except Exception as e:
+            logging.warning(f"BaseBackendWithQueue.__del__() - error: {e}")
+        logging.info(f"BaseBackendWithQueue.__del__() - end")
 
-    def add_message(self, message: Message):
+    def add_message(self, message: Message|Callable):
         self._queue.add_message(message)
+    
+    async def wait_for_queue_flush_batch(self, *, max_tries: int = 3):
+        assert isinstance(max_tries, int) and max_tries > 0
+        start_wait = time.time()
+        for i in range(1, max_tries+1):
+            if not self._queue.quick_lock.acquire(timeout = 1): # should be quick
+                raise TimeoutError("Timed out waiting for lock")
+            last_push = self._queue.last_push
+            self._queue.quick_lock.release()
+            if last_push > start_wait:
+                return
+            if i == max_tries:
+                raise TimeoutError("Timed out waiting for queue to flush batch")
+            else:
+                await asyncio.sleep(self._queue.batch_fill_timeout)
+    
+    def wait_for_queue_flush_full_sync(self):
+        max_batches = 1 + int(self._queue.max_queue_size / self._queue.batch_size)
+        max_tries = int(max_batches * 1.25)
+        assert max_batches >= 1
+        assert max_tries >= 1
+        assert self._queue.stopped # so we can't receive any more messages
+        for i in range(1, max_tries+1):
+            if not self._queue.quick_lock.acquire(timeout = 1): # should be quick
+                raise TimeoutError("Timed out waiting for lock")
+            queue_len = len(self._queue.queue)
+            self._queue.quick_lock.release()
+            if queue_len == 0:
+                return
+            if i == max_tries:
+                raise TimeoutError("Timed out waiting for queue to flush all batches")
+            else:
+                time.sleep(self._queue.batch_fill_timeout)

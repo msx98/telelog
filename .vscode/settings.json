@@ -1,0 +1,4 @@
+{
+    // add Common/src to python path
+    "python.analysis.extraPaths": ["${workspaceFolder}/Pipeline"],
+}

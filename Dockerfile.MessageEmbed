@@ -11,6 +11,8 @@ ADD ./Pipeline/MessageEmbed/download.py /root/download.py
 
 RUN SENTENCE_TRANSFORMERS_MODEL_NAME=${SENTENCE_TRANSFORMERS_MODEL_NAME} python3 -u /root/download.py
 
+ENV IS_DOCKER=1
+
 ENV PYTHONPATH=/app
 
 ADD ./Pipeline /app
