@@ -38,6 +38,7 @@ Design an aggregator that effectively detects and summarizes events from a strea
 4. **Event Summarization:** For each cluster center:
     -  Identify the `l` (e.g., `l = 5`) closest messages.
     -  Generate a summary, using a LLM or cheap NER.
+5. **UMAP:** To visualize summaries of the last day.
 
 ### Potential Improvements
 
