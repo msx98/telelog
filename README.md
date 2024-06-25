@@ -17,7 +17,6 @@ Design an aggregator that effectively detects and summarizes events from a strea
 
 - **Temporality:** Events unfold over time. A robust system needs to understand that events occurring close in time might be related, while those further apart might not be. For real-time applications, distinguishing between similar events happening at different times is crucial. 
 - **Hype Detection:**  Accurately quantifying the "importance" or "hype" of a message is vital for filtering noise and focusing on significant events.
-- 
 
 ## Existing Features
 
