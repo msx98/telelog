@@ -21,9 +21,10 @@ An aggregator `A(m1, ..., mn)` receives a set of messages, and produces a set of
 ### Approaches
 - A really naive one would be to mindlessly shove everything into a SOTA LLM and ask it to summarize everything it sees, maybe with a sliding time window and while filtering out low-hype messages using a manual threshold.
 - A slightly less naive approach, would be to use a pretrained `Em` (e.g. language translation model -> BERT), then define `Ev := AVERAGE`, and `A(m1, ..., mn) := HDBSCAN({mi : mi.date >= now - 1day /\ mi.hype >= mi.sender.average_hype}).cluster_centers`, then set the label of each event as some summary of the `l = 5` closest messages to the cluster center, using a LLM or through NER.
-A time dimension can be concatenated to the message embeddings, and define something like `Em'(m) := AnotherEncoder(m.date, Em(m))`.
+- A time dimension can be concatenated to the message embeddings, and define something like `Em'(m) := AnotherEncoder(m.date, Em(m))`.
+- Initial encoder `Em` and tokenizer can be finetuned using message chains from the dataset.
 - Instead of clustering, we can use a mechanism similar to attention, where the `K * V` result of two embeddings is affected by temporal proximity, and strengthened by the hype score of the message associated with `V`. This is a delicate point though, because how do we actually train the model to do that?
-- We could perhaps train our model to predict hype from events (using a FFNN on top of each of the aggregator's outputs), and penalize it based on deviation from actual cluster hype.
+- Training task: We could perhaps train our model to predict hype from events (using a FFNN on top of each of the aggregator's outputs), and penalize it based on deviation from actual cluster hype.
 - To detect changes, we could measure the difference between two timesteps, and mark new clusters.
 - We can also run this pipeline for each chat, and then try to aggregate the results somehow.
 
