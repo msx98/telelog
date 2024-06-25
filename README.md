@@ -31,4 +31,3 @@ An aggregator `A(m1, ..., mn)` receives a set of messages, and produces a set of
 ### Note on Temporality
 One rocket attack at 8AM and one at 9AM are not the same event for the sake of real-time alerts.
 Nonetheless, if a war erupts at 10AM, a reasonable person would infer some causal relationship between the attacks and the war.
-For the same of clustering, I can think of two ways we can go about this:
