@@ -17,6 +17,7 @@ Design an aggregator that effectively detects and summarizes events from a strea
 
 - **Temporality:** Events unfold over time. A robust system needs to understand that events occurring close in time might be related, while those further apart might not be. For real-time applications, distinguishing between similar events happening at different times is crucial. 
 - **Hype Detection:**  Accurately quantifying the "importance" or "hype" of a message is vital for filtering noise and focusing on significant events.
+- 
 
 ## Existing Features
 
@@ -51,7 +52,4 @@ It does leave the question of how we might train the model to do that without re
     -  Penalize the model based on the deviation of its predicted hype from the actual aggregated hype of the messages in the cluster.
 - **Change Detection:** Calculate the difference in cluster formations between consecutive time steps. Significant changes could signal the emergence of new events.
 - **Per-Chat Aggregation:** Run the pipeline separately for each chat, and then develop a method to aggregate these per-chat event summaries into a global overview.
-
-## Note on Temporality
-
-Two rocket attacks occurring at 8 AM and 9 AM, respectively, need to be recognized as separate events for the sake of real-time alerts, even though they might be causally linked to a subsequent event like a war declaration at 10 AM. So we might not want to merge them at 9AM, but we would at 10AM. Maybe a weight-based clustering, i.e. adding something akin to a physical mass based on hype, and finding mass peaks could help tackle this.
+- **Mass-based Clustering:** Two rocket attacks occurring at 8 AM and 9 AM, respectively, need to be recognized as separate events for the sake of real-time alerts, even though they might be causally linked to a subsequent event like a war declaration at 10 AM. So we might not want to merge them at 9AM, but we would at 10AM. Maybe a weight-based clustering, i.e. adding something akin to a physical mass based on hype, and finding mass peaks could help tackle this.
