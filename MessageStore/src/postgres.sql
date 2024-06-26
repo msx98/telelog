@@ -687,3 +687,65 @@ BEGIN
 END;
 $$;
 
+
+CREATE OR REPLACE FUNCTION get_message_threads(
+    start_date TIMESTAMP,
+    end_date TIMESTAMP DEFAULT NULL,
+    chat_ids BIGINT[] DEFAULT NULL
+)
+RETURNS TABLE (
+    chat_id BIGINT,
+    msg_id_chain BIGINT[],
+    sender_id_chain BIGINT[],
+    text_chain TEXT[]
+)
+AS $$
+BEGIN
+  RETURN QUERY 
+    WITH t AS (
+        WITH actual_tree AS (
+            WITH RECURSIVE message_tree AS (
+                SELECT
+                    m.chat_id						AS chat_id,
+                    m.message_id					AS last_msg_id,
+                    m.reply_to_message_id			AS reply_to_message_id,
+                    m.reply_to_message_id			AS last_reply_to_message_id,
+                    ARRAY[m.message_id]				AS msg_id_chain
+                FROM messages m
+                WHERE (chat_ids IS NULL OR (m.chat_id = ANY(chat_ids))) AND (date >= start_date) AND ((end_date IS NULL) OR (date <= end_date))
+
+                UNION ALL
+
+                SELECT
+                    m.chat_id						AS chat_id,
+                    mt.last_msg_id					AS last_msg_id,
+                    m.reply_to_message_id			AS reply_to_message_id,
+                    mt.last_reply_to_message_id		AS last_reply_to_message_id,
+                    m.message_id || mt.msg_id_chain	AS msg_id_chain
+                FROM messages m JOIN message_tree mt
+                ON m.chat_id = mt.chat_id AND m.message_id = mt.reply_to_message_id
+                WHERE (date >= start_date) AND ((end_date IS NULL) OR (date <= end_date))
+            )
+            SELECT mt.chat_id, mt.msg_id_chain, mt.last_reply_to_message_id, mt.last_msg_id FROM message_tree mt
+            WHERE reply_to_message_id is null -- we don't care about prefixes
+        )
+        SELECT t1.chat_id, t1.msg_id_chain FROM actual_tree t1
+        LEFT JOIN actual_tree t2
+        ON t1.chat_id = t2.chat_id AND t1.last_msg_id = t2.last_reply_to_message_id
+        WHERE t2.msg_id_chain IS NULL
+    )
+    SELECT
+        chat_id,
+        msg_id_chain,
+        ARRAY(
+            SELECT m.sender_id FROM messages m
+            WHERE m.chat_id = t.chat_id AND m.message_id = ANY(t.message_id_chain)
+            ORDER BY array_position(t.message_id_chain, m.message_id)
+        ) AS sender_id_chain,
+        ARRAY(
+            SELECT m.text FROM messages m
+            WHERE m.chat_id = t.chat_id AND m.message_id = ANY(t.message_id_chain)
+            ORDER BY array_position(t.message_id_chain, m.message_id)
+        ) AS text_chain
+END;
+$$ LANGUAGE plpgsql;
