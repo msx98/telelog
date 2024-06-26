@@ -398,6 +398,13 @@ CREATE TABLE chats (
     is_support BOOLEAN,
     linked_chat_id BIGINT,
     phone_number TEXT,
+    sample_count SMALLINT CHECK (sample_count >= 0),
+    arabic_count SMALLINT CHECK (arabic_count >= 0),
+    hebrew_count SMALLINT CHECK (hebrew_count >= 0),
+    english_count SMALLINT CHECK (english_count >= 0),
+    pct_arabic FLOAT GENERATED ALWAYS AS (CASE WHEN sample_count > 0 THEN arabic_count::FLOAT / sample_count::FLOAT ELSE 0 END) STORED,
+    pct_hebrew FLOAT GENERATED ALWAYS AS (CASE WHEN sample_count > 0 THEN hebrew_count::FLOAT / sample_count::FLOAT ELSE 0 END) STORED,
+    pct_english FLOAT GENERATED ALWAYS AS (CASE WHEN sample_count > 0 THEN english_count::FLOAT / sample_count::FLOAT ELSE 0 END) STORED,
     PRIMARY KEY (chat_id)
 );
 
@@ -626,3 +633,57 @@ LEFT JOIN users u ON t.sender_id = u.sender_id
 GROUP BY t.hour, t.total_messages_per_hour
 ORDER BY t.hour;
 $$;
+
+CREATE OR REPLACE VIEW hebrew_chats AS
+SELECT * FROM chats
+WHERE has_hebrew_text(title) OR (sample_count is not null and (hebrew_count::float > (sample_count::float * 0.5)));
+
+CREATE OR REPLACE VIEW arabic_chats AS
+SELECT * FROM chats
+WHERE (has_arabic_text(title) and not has_hebrew_text(title)) OR (sample_count is not null and arabic_count::float > (sample_count::float * 0.7));
+
+CREATE OR REPLACE VIEW english_chats AS
+SELECT * FROM chats
+WHERE (has_english_text(title) and not has_hebrew_text(title) and not has_arabic_text(title)) OR (sample_count is not null and english_count::float > (sample_count::float * 0.7));
+
+CREATE OR REPLACE PROCEDURE update_chat_language_statistics()
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    WITH t AS (
+        WITH RankedMessages AS (
+            SELECT
+                m.chat_id,
+                m.text,
+                ROW_NUMBER() OVER (PARTITION BY m.chat_id ORDER BY m.chat_id) AS rn
+            FROM
+                messages m
+        )
+        SELECT
+            rm.chat_id,
+            COALESCE(rm.text, '') as text
+        FROM
+            RankedMessages rm
+        WHERE
+            rm.rn <= 10
+    )
+    UPDATE chats c
+    SET
+        sample_count = sub.sample_count,
+        arabic_count = sub.arabic_count,
+        hebrew_count = sub.hebrew_count,
+        english_count = sub.english_count
+    FROM (
+        SELECT
+            chat_id,
+            count(*) filter (where LENGTH(text) > 0) as sample_count,
+            count(*) filter (where has_arabic_text(text)) as arabic_count,
+            count(*) filter (where has_hebrew_text(text)) as hebrew_count,
+            count(*) filter (where has_english_text(text)) as english_count
+        FROM t 
+        GROUP BY chat_id
+    ) AS sub
+    WHERE c.chat_id = sub.chat_id;
+END;
+$$;
+

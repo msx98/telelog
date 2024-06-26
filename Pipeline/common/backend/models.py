@@ -41,6 +41,16 @@ granularity_type_enum = ENUM(
     name='granularity_type'
 )
 
+class GranularityType(Enum):
+    one_minute = '1m'
+    two_minutes = '2m'
+    five_minutes = '5m'
+    fifteen_minutes = '15m'
+    thirty_minutes = '30m'
+    sixty_minutes = '60m'
+    ninety_minutes = '90m'
+    one_day = '1d'
+
 class ChatType(Enum):
     private = 'private'
     bot = 'bot'
