@@ -1,9 +1,28 @@
 services:
 
+  db:
+    build:
+      context: ./MessageStore
+      dockerfile: Dockerfile
+    restart: always
+    env_file:
+      - path: ./.env
+        required: true
+    ports:
+      # <Port exposed> : <MySQL Port running inside container>
+      #- "127.0.0.1:3306:3306"
+      - "3308:3306"
+      #- "172.69.128.2:3307:3306"
+    volumes:
+      - ./MessageStore/db:/var/lib/mysql
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.1
+
   postgres:
     build:
       context: ./MessageStore
-      dockerfile: dockerfiles/postgres.Dockerfile
+      dockerfile: postgres.Dockerfile
     restart: always
     env_file:
       - path: ./.env
@@ -38,7 +57,7 @@ services:
   stocks:
     build:
       context: .
-      dockerfile: dockerfiles/Dockerfile.StocksFetch
+      dockerfile: Dockerfile.StocksFetch
     restart: always
     env_file:
       - path: ./.env
@@ -54,7 +73,7 @@ services:
   chatbot:
     build:
       context: .
-      dockerfile: dockerfiles/Dockerfile.ChatBot
+      dockerfile: Dockerfile.ChatBot
     restart: always
     volumes:
       - ./downloads:/downloads
@@ -70,7 +89,7 @@ services:
   fetch:
     build:
       context: .
-      dockerfile: dockerfiles/Dockerfile.MessageFetchMulti
+      dockerfile: Dockerfile.MessageFetchMulti
     restart: always
     env_file:
       - path: ./.env
@@ -84,7 +103,7 @@ services:
   multi:
     build:
       context: .
-      dockerfile: dockerfiles/Dockerfile.MessageFetchMulti
+      dockerfile: Dockerfile.MessageFetchMulti
     restart: always
     env_file:
       - path: ./.env
@@ -98,7 +117,7 @@ services:
   refresh:
     build:
       context: .
-      dockerfile: dockerfiles/Dockerfile.MessageRefresh
+      dockerfile: Dockerfile.MessageRefresh
     restart: always
     env_file:
       - path: ./.env
@@ -112,7 +131,7 @@ services:
   updatelinks:
     build:
       context: .
-      dockerfile: dockerfiles/Dockerfile.UpdateLinks
+      dockerfile: Dockerfile.UpdateLinks
     restart: always
     env_file:
       - path: ./.env
@@ -124,7 +143,7 @@ services:
   embed:
     build:
       context: .
-      dockerfile: dockerfiles/Dockerfile.MessageEmbed
+      dockerfile: Dockerfile.MessageEmbed
     restart: always
     env_file:
       - path: ./.env
@@ -132,7 +151,79 @@ services:
     networks:
       sqlnet:
         ipv4_address: 172.69.128.12
+
+  embed-queue:
+    build:
+      context: .
+      dockerfile: Dockerfile.EmbedQueue
+    ports:
+      - "8080:5555"
+    restart: always
+    env_file:
+      - path: ./.env
+        required: true
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.20
   
+  message-fetch-old:
+    build:
+      context: ./MessageFetch
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      IS_DOCKER: true
+      RUN_FILENAME: "fetch_channel_history.py"
+      RUN_MAIN_NOHUP: false
+    env_file:
+      - path: ./.env
+        required: true
+    volumes:
+      - ./MessageFetch/app:/app
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.2
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+
+  message-fetch-groups:
+    build:
+      context: ./MessageFetch
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      IS_DOCKER: true
+      RUN_FILENAME: "main.py"
+    env_file:
+      - path: ./.env
+        required: true
+    volumes:
+      - ./MessageFetch/app:/app
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.6
+
+  embed-messages:
+    build:
+      context: ./MessageFetch
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      IS_DOCKER: true
+      RUN_FILENAME: "create_message_embeddings_pg.py"
+      RUN_MAIN_NOHUP: false
+    env_file:
+      - path: ./.env
+        required: true
+    volumes:
+      - ./MessageFetch/app:/app
+    networks:
+      sqlnet:
+        ipv4_address: 172.69.128.7
+
   hue:
     build:
       context: ./MessageStore/
