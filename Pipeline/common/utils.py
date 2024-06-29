@@ -1,6 +1,9 @@
 from typing import *
 import random
 import time
+
+from sqlalchemy import UniqueConstraint, inspect, text
+from sqlalchemy.dialects.postgresql import insert
 from common.consts import consts
 from common.backend.config import Config
 import logging
@@ -123,3 +126,40 @@ async def run_async(func: Callable, *, check_interval: float = 1, timeout: float
         raise error[0]
     else:
         return result[0]
+
+def upsert(sess, model, rows):
+    table = model.__table__
+    stmt = insert(table)
+    primary_keys = [key.name for key in inspect(table).primary_key]
+    #from sqlalchemy import case
+    update_dict = {c.name: text(f"CASE WHEN EXCLUDED.{c.name} IS NOT NULL THEN EXCLUDED.{c.name} ELSE {table.name}.{c.name} END")
+                   for c in stmt.excluded
+                   if not c.primary_key and not c.computed
+                   and (c.name not in {"has_poll", "has_text", "has_media", "has_reactions"})}
+
+    if not update_dict:
+        raise ValueError("insert_or_update resulted in an empty update_dict")
+
+    stmt = stmt.on_conflict_do_update(
+        index_elements=primary_keys,
+        set_=update_dict,
+    )
+
+    seen = set()
+    foreign_keys = {col.name: list(col.foreign_keys)[0].column for col in table.columns if col.foreign_keys}
+    unique_constraints = [c for c in table.constraints if isinstance(c, UniqueConstraint)]
+    def handle_foreignkeys_constraints(row):
+        for c_name, c_value in foreign_keys.items():
+            foreign_obj = row.pop(c_value.table.name, None)
+            row[c_name] = getattr(foreign_obj, c_value.name) if foreign_obj else None
+
+        for const in unique_constraints:
+            unique = tuple([const,] + [row[col.name] for col in const.columns])
+            if unique in seen:
+                return None
+            seen.add(unique)
+
+        return row
+
+    rows = list(filter(None, (handle_foreignkeys_constraints(row) for row in rows)))
+    return sess.execute(stmt, rows)

@@ -15,7 +15,7 @@ import googlefinance as gf
 from collections import OrderedDict
 
 from common.utils import create_postgres_engine
-from common.backend.pg_backend import upsert
+from common.utils import upsert
 import common.backend.models as models
 
 

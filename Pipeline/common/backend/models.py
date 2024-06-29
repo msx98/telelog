@@ -349,3 +349,25 @@ class StocksUnpart(Base):
         CheckConstraint('volume >= 0'),
         CheckConstraint('adj_close >= 0'),
     )
+
+
+class MessageChain(Base):
+    __tablename__ = 'message_chain'
+    chat_id = Column(BigInteger, primary_key=True)
+    last_message_id = Column(BigInteger, primary_key=True)
+    chain_len = Column(Integer, CheckConstraint('chain_len >= 1'))
+    chain = Column(Text)
+    __table_args__ = (
+        PrimaryKeyConstraint('chat_id', 'last_message_id'),
+        CheckConstraint('chain_len >= 1'),
+    )
+
+
+class MessageChainEmbeddingsHegemmav2(Base):
+    __tablename__ = 'message_chain_embeddings_hegemmav2'
+    chat_id = Column(BigInteger, primary_key=True)
+    last_message_id = Column(BigInteger, primary_key=True)
+    embedding = Column(Vector(3072), nullable=False)
+    __table_args__ = (
+        PrimaryKeyConstraint('chat_id', 'last_message_id'),
+    )

@@ -3,7 +3,7 @@
 import os
 import time
 from typing import List, Dict, Tuple
-from common.utils import load_pyrogram_session, create_postgres_engine
+from common.utils import load_pyrogram_session, create_postgres_engine, upsert
 from pyrogram.enums import ChatType
 from pyrogram.types import Message, User, Chat, Dialog, ChatPreview
 from pyrogram.errors import RPCError, FloodWait, Flood
@@ -24,7 +24,7 @@ import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
-from common.backend.pg_backend import compose_insert_chat_dict_query, clean_dict, upsert, aggregate_chat_dict_queries
+from common.backend.pg_backend import compose_insert_chat_dict_query, clean_dict, aggregate_chat_dict_queries
 logging.basicConfig(level=logging.INFO)
 
 
