@@ -24,35 +24,22 @@ class SenderQueue:
         self.killed = False
         self.n_pending, self.n_sent, self.n_ack = 0, 0, 0
 
-    def _send(self, chat_id: int, message_ids: List[int], embeddings: np.ndarray):
-        # Prepare metadata
-        self.n_sent += len(message_ids)
-        metadata = f"{chat_id}:{','.join([str(x) for x in message_ids])}"
+    def _send(self, chat_id: int, message_ids: List[int], embeddings: List[np.ndarray]):
+        n = len(message_ids)
+        if n == 0:
+            return True
+        assert len(embeddings) == n
+        metadata = f"{chat_id}:{n}:{','.join([str(x) for x in message_ids])}"
         metadata_bytes = metadata.encode()
-        metadata_size = len(metadata_bytes)
-
-        # Convert embeddings to bytes and calculate size
-        embeddings_bytes = embeddings.tobytes()
-        embeddings_size = len(embeddings_bytes)
-
-        # Calculate total size (metadata + embeddings)
-        total_size = metadata_size + embeddings_size
-
-        # Send total size first
-        self.socket.send(str(total_size).encode())
-        self.socket.recv() # Wait for server to be ready
-
-        # Send metadata
         self.socket.send(metadata_bytes)
-        self.socket.recv() # Wait for server to be ready
-
-        # Send embeddings
-        self.socket.send(embeddings_bytes)
-
-        # Wait for an acknowledgment
-        ack = self.socket.recv()
-        self.n_ack += len(message_ids)
-        return ack
+        
+        for i in range(n):
+            embedding = embeddings[i]
+            embedding_bytes = embedding.tobytes()
+            self.socket.send(embedding_bytes)
+            self.n_sent += 1
+            #self.n_ack += 1
+        return True
 
     def add(self, chat_ids: List[int], message_ids: List[List[int]], embeddings: List[np.ndarray]):
         if self.killed:
@@ -63,8 +50,8 @@ class SenderQueue:
             self.thread.start()
         with self.lock:
             logging.info(f"Obtained lock")
-            for chat_id, message_ids, embedding in zip(chat_ids, message_ids, embeddings):
-                self.queue[chat_id].put((message_ids, embedding))
+            for chat_id, message_id, embedding in zip(chat_ids, message_ids, embeddings):
+                self.queue[chat_id].put((message_id, embedding))
                 self.n_pending += 1
     
     def kill(self):
@@ -87,18 +74,22 @@ class SenderQueue:
                 chat_ids = list(self.queue.keys())
             for chat_id in chat_ids:
                 q = self.queue[chat_id]
-                if not q.empty():
-                    message_ids, embedding = q.get()
-                    try:
-                        self._send(chat_id, message_ids, embedding)
-                    except Exception as e:
-                        logging.error(f"Error sending data: {e}")
-                        # Handle error (e.g., re-queue data, log, etc.)
-                    finally:
-                        q.task_done()
-                else:
-                    with self.lock:
-                        del self.queue[chat_id]
+                if len(q) < 1024:
+                    continue
+                all_message_ids = []
+                all_embeddings = []
+                with self.lock:
+                    while not q.empty():
+                        message_id, embedding = q.get()
+                        all_message_ids.append(message_id)
+                        all_embeddings.append(embedding)
+                try:
+                    self._send(chat_id, all_message_ids, all_embeddings)
+                except Exception as e:
+                    logging.error(f"Error sending data: {e}")
+                    # Handle error (e.g., re-queue data, log, etc.)
+                finally:
+                    q.task_done()
         logging.info("SenderQueue runner exited")
     
     def __del__(self):

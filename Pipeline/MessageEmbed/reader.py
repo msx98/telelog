@@ -15,7 +15,7 @@ class MessageReader:
         self.ongoing_session = None
         self.killed = False
 
-    def get_messages(self, batch_size: int = 128) -> Generator[List[Tuple[int, int, str]], None, None]:
+    def get_messages(self, *, batch_size: int = 128, require_channel_responses: bool = False) -> Generator[List[Tuple[int, int, str]], None, None]:
         """
         Generator yielding the next batch of messages.
         
@@ -26,11 +26,19 @@ class MessageReader:
         with Session(self.engine) as session:
             self.ongoing_session = session
             offset = 0
+            where_channel_responses = f"""
+                            WHERE (chat_id IN (select chat_id from hebrew_chats where type='supergroup'))
+                            AND (sent_by_linked_chat IS TRUE)
+                            AND (chain_len>5)
+                            """ if require_channel_responses else ""
             while not self.killed:
 
                 stmt = text(f"""
                     SELECT m.chat_id, m.last_message_id, m.chain
-                    FROM {MessageChain.__tablename__} m
+                    FROM (
+                            SELECT * FROM {MessageChain.__tablename__}
+                            {where_channel_responses}
+                    ) m
                     LEFT JOIN {MessageChainEmbeddingsHegemmav2.__tablename__} e
                     USING (chat_id, last_message_id)
                     WHERE e.embedding IS NULL
@@ -39,6 +47,7 @@ class MessageReader:
                 """).bindparams(batch_size=batch_size, offset=offset)
                 result = session.execute(stmt)
                 messages = result.fetchall()
+                # chat_id, last_message_id, chain
                 messages = [(row[0], row[1], row[2]) for row in messages]
 
                 if not messages:
@@ -46,7 +55,7 @@ class MessageReader:
 
                 yield messages  # Yield the batch
 
-                offset += self.batch_size 
+                offset += batch_size 
     
     def kill(self):
         self.killed = True

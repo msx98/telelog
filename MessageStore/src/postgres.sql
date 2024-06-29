@@ -461,25 +461,30 @@ CREATE TABLE messages_10 PARTITION OF messages FOR VALUES WITH (MODULUS 13,REMAI
 CREATE TABLE messages_11 PARTITION OF messages FOR VALUES WITH (MODULUS 13,REMAINDER 11);
 CREATE TABLE messages_12 PARTITION OF messages FOR VALUES WITH (MODULUS 13,REMAINDER 12);
 
-CREATE TABLE message_embeddings_hegemmav2 (
-    chat_id BIGINT NOT NULL,
-    message_id BIGINT NOT NULL,
-    embedding VECTOR(3072),
-    PRIMARY KEY (chat_id, message_id),
-    FOREIGN KEY (chat_id, message_id) REFERENCES messages(chat_id, message_id)
-);
-
 CREATE TABLE message_chain (
     chat_id BIGINT NOT NULL REFERENCES chats(chat_id),
     last_message_id BIGINT NOT NULL,
     chain_len INTEGER NOT NULL CHECK (chain_len >= 1),
-    first_sender_id BIGINT NOT NULL,
     first_message_id BIGINT NOT NULL,
-    first_is_linked_chat BOOLEAN NOT NULL,
+    sent_by_linked_chat BOOLEAN NOT NULL,
     chain TEXT NOT NULL,
     PRIMARY KEY (chat_id, last_message_id),
     FOREIGN KEY (chat_id, last_message_id) REFERENCES messages(chat_id, message_id)
-);
+) PARTITION BY HASH (chat_id);
+
+CREATE TABLE message_chain_0 PARTITION OF message_chain FOR VALUES WITH (MODULUS 13, REMAINDER 0);
+CREATE TABLE message_chain_1 PARTITION OF message_chain FOR VALUES WITH (MODULUS 13, REMAINDER 1);
+CREATE TABLE message_chain_2 PARTITION OF message_chain FOR VALUES WITH (MODULUS 13, REMAINDER 2);
+CREATE TABLE message_chain_3 PARTITION OF message_chain FOR VALUES WITH (MODULUS 13, REMAINDER 3);
+CREATE TABLE message_chain_4 PARTITION OF message_chain FOR VALUES WITH (MODULUS 13, REMAINDER 4);
+CREATE TABLE message_chain_5 PARTITION OF message_chain FOR VALUES WITH (MODULUS 13, REMAINDER 5);
+CREATE TABLE message_chain_6 PARTITION OF message_chain FOR VALUES WITH (MODULUS 13, REMAINDER 6);
+CREATE TABLE message_chain_7 PARTITION OF message_chain FOR VALUES WITH (MODULUS 13, REMAINDER 7);
+CREATE TABLE message_chain_8 PARTITION OF message_chain FOR VALUES WITH (MODULUS 13, REMAINDER 8);
+CREATE TABLE message_chain_9 PARTITION OF message_chain FOR VALUES WITH (MODULUS 13, REMAINDER 9);
+CREATE TABLE message_chain_10 PARTITION OF message_chain FOR VALUES WITH (MODULUS 13, REMAINDER 10);
+CREATE TABLE message_chain_11 PARTITION OF message_chain FOR VALUES WITH (MODULUS 13, REMAINDER 11);
+CREATE TABLE message_chain_12 PARTITION OF message_chain FOR VALUES WITH (MODULUS 13, REMAINDER 12);
 
 CREATE TABLE message_chain_embeddings_hegemmav2 (
     chat_id BIGINT NOT NULL,

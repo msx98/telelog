@@ -356,6 +356,8 @@ class MessageChain(Base):
     chat_id = Column(BigInteger, primary_key=True)
     last_message_id = Column(BigInteger, primary_key=True)
     chain_len = Column(Integer, CheckConstraint('chain_len >= 1'))
+    first_message_id = Column(BigInteger)
+    sent_by_linked_chat = Column(Boolean)
     chain = Column(Text)
     __table_args__ = (
         PrimaryKeyConstraint('chat_id', 'last_message_id'),
