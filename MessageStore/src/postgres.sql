@@ -461,11 +461,32 @@ CREATE TABLE messages_10 PARTITION OF messages FOR VALUES WITH (MODULUS 13,REMAI
 CREATE TABLE messages_11 PARTITION OF messages FOR VALUES WITH (MODULUS 13,REMAINDER 11);
 CREATE TABLE messages_12 PARTITION OF messages FOR VALUES WITH (MODULUS 13,REMAINDER 12);
 
-CREATE TABLE message_embeddings (
+CREATE TABLE message_embeddings_hegemmav2 (
     chat_id BIGINT NOT NULL,
     message_id BIGINT NOT NULL,
-    embedding VECTOR(768),
-    PRIMARY KEY (chat_id, message_id)
+    embedding VECTOR(3072),
+    PRIMARY KEY (chat_id, message_id),
+    FOREIGN KEY (chat_id, message_id) REFERENCES messages(chat_id, message_id)
+);
+
+CREATE TABLE message_chain (
+    chat_id BIGINT NOT NULL REFERENCES chats(chat_id),
+    last_message_id BIGINT NOT NULL,
+    chain_len INTEGER NOT NULL CHECK (chain_len >= 1),
+    first_sender_id BIGINT NOT NULL,
+    first_message_id BIGINT NOT NULL,
+    first_is_linked_chat BOOLEAN NOT NULL,
+    chain TEXT NOT NULL,
+    PRIMARY KEY (chat_id, last_message_id),
+    FOREIGN KEY (chat_id, last_message_id) REFERENCES messages(chat_id, message_id)
+);
+
+CREATE TABLE message_chain_embeddings_hegemmav2 (
+    chat_id BIGINT NOT NULL,
+    last_message_id BIGINT NOT NULL,
+    embedding VECTOR(3072),
+    PRIMARY KEY (chat_id, last_message_id),
+    FOREIGN KEY (chat_id, last_message_id) REFERENCES message_chain(chat_id, last_message_id)
 );
 
 CREATE TABLE reactions (
