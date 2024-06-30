@@ -7,9 +7,13 @@ RUN apt-get update && apt-get install -y git iputils-ping
 
 RUN pip3 install runpod sentence-transformers python-dotenv psycopg2-binary sqlalchemy git+https://github.com/pgvector/pgvector-python.git
 
-ADD ./Pipeline/MessageEmbed/download.py /root/download.py
+#ADD ./Pipeline/MessageEmbed/download.py /root/download.py
 
-RUN SENTENCE_TRANSFORMERS_MODEL_NAME=${SENTENCE_TRANSFORMERS_MODEL_NAME} python3 -u /root/download.py
+#RUN SENTENCE_TRANSFORMERS_MODEL_NAME=${SENTENCE_TRANSFORMERS_MODEL_NAME} python3 -u /root/download.py
+
+RUN pip3 install --no-cache-dir torch transformers huggingface_hub bitsandbytes>=0.43.0 accelerate pandas
+
+RUN pip3 install pyzmq
 
 ENV IS_DOCKER=1
 
