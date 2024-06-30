@@ -40,8 +40,6 @@ def main(
 def get_save_func(output_path: Optional[str]) -> Callable:
     if not output_path:
         output_path = f"./output/chats.parquet"
-    if os.path.exists(output_path):
-        raise FileExistsError(f"Output file already exists: {output_path}")
     _, format = os.path.splitext(output_path)
     format = format[1:]
     if format == 'csv':

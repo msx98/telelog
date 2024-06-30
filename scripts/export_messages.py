@@ -14,7 +14,7 @@ from common.backend.models import ChatType
 logging.basicConfig(level=logging.INFO)
 
 
-default_days_ago = 30
+default_days_ago = 90
 default_end_date = datetime.date.today()
 all_chat_types = [chat_type.name for chat_type in ChatType]
 default_allowed_chat_types = [ChatType.channel.name, ChatType.group.name]
@@ -51,7 +51,7 @@ def main(
     session = Session(engine)
     logging.info("Initialized session")
 
-    required_columns = "m.chat_id, m.message_id, m.text, m.reply_to_message_id, m.forward_from_chat_id, m.forward_from_message_id"
+    required_columns = "m.chat_id, m.message_id, m.sender_id, m.text, m.reply_to_message_id, m.forward_from_chat_id, m.forward_from_message_id"
     query_columns = required_columns
 
     query = f"""SELECT {query_columns} FROM messages m WHERE date BETWEEN '{start_date}' AND '{end_date}'"""
@@ -78,10 +78,12 @@ WITH RECURSIVE message_tree AS (
 SELECT {required_columns} FROM message_tree m"""
 
     logging.info(f"Executing query: `{query}`")
-    df = pd.read_sql(query, engine)#, dtype={"chat_id": np.int64, "message_id": np.int64, "reply_to_message_id": np.int64, "forward_from_chat_id": np.int64, "forward_from_message_id": np.int64})
-
-    logging.info(f"Exporting {len(df)} messages into {output_path}")
-    save(df)
+    df = pd.read_sql(query, engine, chunksize=100000)#, dtype={"chat_id": np.int64, "message_id": np.int64, "reply_to_message_id": np.int64, "forward_from_chat_id": np.int64, "forward_from_message_id": np.int64})
+    is_first = True
+    for chunk in df:
+        logging.info(f"Exporting {len(chunk)} messages into {output_path}")
+        save(chunk, engine="fastparquet", append=not is_first)
+        is_first = False
     
     logging.info(f"Closing session")
     session.close()
@@ -101,11 +103,11 @@ def get_valid_output_path(output_path: Optional[str], chats_table: str, end_date
     _, format = os.path.splitext(output_path)
     format = format[1:]
     if format == 'csv':
-        save_func = lambda df: df.to_csv(output_path, index=False)
+        save_func = lambda df, **kwargs: df.to_csv(output_path, index=False, **kwargs)
     elif format == 'parquet':
-        save_func = lambda df: df.to_parquet(output_path, index=False, compression="gzip")
+        save_func = lambda df, **kwargs: df.to_parquet(output_path, index=False, **kwargs)
     elif format == 'pickle':
-        save_func = lambda df: df.to_pickle(output_path)
+        save_func = lambda df, **kwargs: df.to_pickle(output_path, **kwargs)
     else:
         raise ValueError(f"Unknown format: {format}")
     base_dir = os.path.dirname(output_path)
